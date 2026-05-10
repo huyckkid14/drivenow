@@ -24,6 +24,7 @@ const cars = [];
 const trafficLights = [];
 const roadSegments = [];
 const collidableCars = [];
+const buildingObstacles = [];
 const buildings = new THREE.Group();
 const roads = new THREE.Group();
 const city = new THREE.Group();
@@ -36,6 +37,7 @@ const BOUNDS = 68;
 const CAR_RADIUS = 2.35;
 const STOP_DISTANCE = 11.5;
 const COLLISION_DISTANCE = 2.75;
+const BUILDING_BOUNCE = 0.18;
 const TRAFFIC_CYCLE = 10;
 
 const state = {
@@ -89,8 +91,11 @@ function init() {
   createSkylineDetails();
 
   window.addEventListener("keydown", onKeyDown);
-  window.addEventListener("keyup", (event) => keys.delete(event.key));
+  window.addEventListener("keyup", (event) => keys.delete(event.key.toLowerCase()));
   window.addEventListener("resize", onResize);
+  renderer.domElement.tabIndex = 0;
+  renderer.domElement.addEventListener("click", () => renderer.domElement.focus());
+  renderer.domElement.focus();
   restartBtn.addEventListener("click", restartCity);
   loadingEl.hidden = true;
 }
@@ -175,6 +180,7 @@ function createBlocks() {
         tower.castShadow = true;
         tower.receiveShadow = true;
         buildings.add(tower);
+        buildingObstacles.push({ x: bx, z: bz, halfX: w / 2 + 0.7, halfZ: d / 2 + 0.7 });
 
         for (let y = 2.2; y < h - 1; y += 2.6) {
           const win = new THREE.Mesh(new THREE.BoxGeometry(w + 0.04, 0.55, 0.08), glassMat);
@@ -190,18 +196,19 @@ function createTrafficLights() {
   for (const x of GRID) {
     for (const z of GRID) {
       const poleMat = new THREE.MeshStandardMaterial({ color: 0x28312f, roughness: 0.6 });
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 4.2, 10), poleMat);
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 4.9, 12), poleMat);
       pole.position.set(x + 6.4, 2.1, z + 6.4);
       pole.castShadow = true;
       city.add(pole);
 
-      const box = new THREE.Mesh(new THREE.BoxGeometry(1.05, 1.7, 0.55), poleMat);
-      box.position.set(x + 6.4, 4.45, z + 6.4);
-      box.castShadow = true;
-      city.add(box);
+      const armA = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 3.2), poleMat);
+      armA.position.set(x + 6.4, 4.78, z + 4.9);
+      const armB = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.18, 0.18), poleMat);
+      armB.position.set(x + 4.9, 4.78, z + 6.4);
+      city.add(armA, armB);
 
-      const nsLight = makeSignalLamp(x, z, "ns", new THREE.Vector3(x + 6.42, 4.45, z + 6.1));
-      const ewLight = makeSignalLamp(x, z, "ew", new THREE.Vector3(x + 6.1, 4.45, z + 6.42));
+      const nsLight = makeSignalLamp(x, z, "ns", new THREE.Vector3(x + 6.42, 4.42, z + 3.75));
+      const ewLight = makeSignalLamp(x, z, "ew", new THREE.Vector3(x + 3.75, 4.42, z + 6.42));
       ewLight.group.rotation.y = Math.PI / 2;
       trafficLights.push(nsLight, ewLight);
     }
@@ -211,20 +218,26 @@ function createTrafficLights() {
 function makeSignalLamp(x, z, axis, position) {
   const group = new THREE.Group();
   group.position.copy(position);
-  const red = lampDisc(0xff241d, 0.46);
+  const housing = new THREE.Mesh(
+    new THREE.BoxGeometry(0.9, 2.25, 0.42),
+    new THREE.MeshStandardMaterial({ color: 0x151918, roughness: 0.55 }),
+  );
+  housing.castShadow = true;
+  const red = lampDisc(0xff241d, 0.68);
   const yellow = lampDisc(0xffcf33, 0);
-  const green = lampDisc(0x36dc6d, -0.46);
-  group.add(red, yellow, green);
+  const green = lampDisc(0x36dc6d, -0.68);
+  group.add(housing, red, yellow, green);
   city.add(group);
   return { x, z, axis, group, red, yellow, green, state: "red" };
 }
 
 function lampDisc(color, y) {
   const mesh = new THREE.Mesh(
-    new THREE.SphereGeometry(0.16, 16, 8),
-    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.16 }),
+    new THREE.SphereGeometry(0.28, 24, 12),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.16, roughness: 0.28 }),
   );
   mesh.position.y = y;
+  mesh.position.z = -0.24;
   return mesh;
 }
 
@@ -241,6 +254,8 @@ function createPlayer() {
     immobilized: false,
     hazard: false,
     blink: 0,
+    steer: 0,
+    velocity: new THREE.Vector3(),
     lastSafe: player.position.clone(),
     indicators: player.userData.indicators,
   };
@@ -278,6 +293,7 @@ function createBots() {
       immobilized: false,
       hazard: false,
       blink: Math.random(),
+      velocity: new THREE.Vector3(),
       indicators: bot.userData.indicators,
     };
     city.add(bot);
@@ -390,6 +406,9 @@ function updateTrafficLights() {
     light.red.material.emissiveIntensity = light.state === "red" ? 1.8 : 0.08;
     light.yellow.material.emissiveIntensity = light.state === "yellow" ? 1.7 : 0.08;
     light.green.material.emissiveIntensity = light.state === "green" ? 1.6 : 0.08;
+    light.red.scale.setScalar(light.state === "red" ? 1.22 : 0.82);
+    light.yellow.scale.setScalar(light.state === "yellow" ? 1.22 : 0.82);
+    light.green.scale.setScalar(light.state === "green" ? 1.22 : 0.82);
   }
 }
 
@@ -398,23 +417,31 @@ function updatePlayer(dt) {
   const data = car.userData;
   if (data.immobilized) return;
 
-  const accel = keys.has("ArrowUp") ? 26 : 0;
-  const brake = keys.has("ArrowDown") ? 36 : 0;
-  const drag = 5.5 + Math.abs(data.speed) * 0.12;
+  const throttle = keys.has("arrowup") ? 1 : 0;
+  const brakeKey = keys.has("arrowdown") ? 1 : 0;
+  const steerInput = (keys.has("arrowleft") ? 1 : 0) - (keys.has("arrowright") ? 1 : 0);
+  data.steer = moveToward(data.steer, steerInput, dt * 4.8);
+
+  const accel = throttle * 18;
+  const brake = brakeKey * (data.speed > 0.2 ? 34 : 13);
+  const drag = 4.2 + Math.abs(data.speed) * 0.1;
   data.speed += accel * dt;
   data.speed -= brake * dt;
-  if (!keys.has("ArrowUp")) data.speed -= Math.sign(data.speed) * drag * dt;
+  if (!throttle && !brakeKey) data.speed -= Math.sign(data.speed) * drag * dt;
   if (Math.abs(data.speed) < 0.1) data.speed = 0;
-  data.speed = THREE.MathUtils.clamp(data.speed, -9, data.maxSpeed);
+  data.speed = THREE.MathUtils.clamp(data.speed, -7.5, data.maxSpeed);
 
-  const turn = (keys.has("ArrowLeft") ? 1 : 0) - (keys.has("ArrowRight") ? 1 : 0);
   if (Math.abs(data.speed) > 0.4) {
-    car.rotation.y += turn * dt * (1.55 + Math.abs(data.speed) * 0.025) * Math.sign(data.speed || 1);
+    const speedFactor = THREE.MathUtils.clamp(Math.abs(data.speed) / data.maxSpeed, 0.18, 1);
+    car.rotation.y += data.steer * dt * (1.18 + speedFactor * 1.25) * Math.sign(data.speed || 1);
   }
 
   const forward = getForward(car);
-  car.position.addScaledVector(forward, data.speed * dt);
+  const previous = car.position.clone();
+  data.velocity.copy(forward).multiplyScalar(data.speed);
+  car.position.addScaledVector(data.velocity, dt);
   keepNearRoad(car);
+  resolveBuildingCollisions(car, previous);
   car.position.x = THREE.MathUtils.clamp(car.position.x, -BOUNDS, BOUNDS);
   car.position.z = THREE.MathUtils.clamp(car.position.z, -BOUNDS, BOUNDS);
 }
@@ -433,7 +460,8 @@ function updateBots(dt) {
     maybeTurnAtIntersection(bot);
     const forward = dirs[data.dir];
     bot.rotation.y = lerpAngle(bot.rotation.y, yawForDir(data.dir), dt * 7);
-    bot.position.addScaledVector(forward, data.speed * dt);
+    data.velocity.copy(forward).multiplyScalar(data.speed);
+    bot.position.addScaledVector(data.velocity, dt);
     wrapBot(bot);
   }
 }
@@ -507,17 +535,31 @@ function updateCollisions(dt) {
 }
 
 function immobilizeCollision(a, b, dt) {
-  const delta = a.position.clone().sub(b.position);
-  if (delta.lengthSq() < 0.01) delta.set(1, 0, 0);
-  delta.normalize();
-  const impactA = getForward(a).multiplyScalar(a.userData.speed || 0);
-  const impactB = getForward(b).multiplyScalar(b.userData.speed || 0);
-  a.position.addScaledVector(delta, 1.2 + impactB.length() * dt * 0.22);
-  b.position.addScaledVector(delta, -1.2 - impactA.length() * dt * 0.22);
-  a.rotation.y += 0.32;
-  b.rotation.y -= 0.32;
+  const normal = a.position.clone().sub(b.position);
+  if (normal.lengthSq() < 0.001) normal.copy(getForward(a));
+  normal.y = 0;
+  normal.normalize();
+
+  const overlap = Math.max(0, COLLISION_DISTANCE - a.position.distanceTo(b.position));
+  a.position.addScaledVector(normal, overlap * 0.55 + 0.35);
+  b.position.addScaledVector(normal, -overlap * 0.55 - 0.35);
+
+  const velocityA = carVelocity(a);
+  const velocityB = carVelocity(b);
+  const relativeVelocity = velocityA.clone().sub(velocityB);
+  const closingSpeed = Math.max(0, -relativeVelocity.dot(normal));
+  const impulse = normal.clone().multiplyScalar(closingSpeed * 0.62 + relativeVelocity.length() * 0.18);
+  a.position.addScaledVector(impulse, dt * 0.36);
+  b.position.addScaledVector(impulse, -dt * 0.36);
+
+  const tangent = new THREE.Vector3(-normal.z, 0, normal.x);
+  const spin = THREE.MathUtils.clamp(relativeVelocity.dot(tangent) * 0.045, -0.7, 0.7);
+  a.rotation.y += spin;
+  b.rotation.y -= spin;
+
   for (const car of [a, b]) {
     car.userData.speed = 0;
+    car.userData.velocity.set(0, 0, 0);
     car.userData.immobilized = true;
     car.userData.hazard = true;
   }
@@ -575,16 +617,21 @@ function updateHud() {
 }
 
 function onKeyDown(event) {
-  keys.add(event.key);
-  if (event.key.toLowerCase() === "q") {
+  const key = event.key.toLowerCase();
+  keys.add(key);
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "q", "r", "z"].includes(key)) {
+    event.preventDefault();
+  }
+  if (event.repeat && ["q", "r", "z"].includes(key)) return;
+  if (key === "q") {
     state.signal = state.signal === "left" ? "off" : "left";
     state.hazard = false;
   }
-  if (event.key.toLowerCase() === "r") {
+  if (key === "r") {
     state.signal = state.signal === "right" ? "off" : "right";
     state.hazard = false;
   }
-  if (event.key.toLowerCase() === "z") {
+  if (key === "z") {
     state.hazard = !state.hazard;
     state.signal = "off";
   }
@@ -601,6 +648,38 @@ function restartCity() {
   restartBtn.hidden = true;
   createPlayer();
   createBots();
+}
+
+function resolveBuildingCollisions(car, previous) {
+  let hit = false;
+  for (const obstacle of buildingObstacles) {
+    const closestX = THREE.MathUtils.clamp(car.position.x, obstacle.x - obstacle.halfX, obstacle.x + obstacle.halfX);
+    const closestZ = THREE.MathUtils.clamp(car.position.z, obstacle.z - obstacle.halfZ, obstacle.z + obstacle.halfZ);
+    const dx = car.position.x - closestX;
+    const dz = car.position.z - closestZ;
+    const distSq = dx * dx + dz * dz;
+    if (distSq > CAR_RADIUS * CAR_RADIUS) continue;
+
+    let normal = new THREE.Vector3(dx, 0, dz);
+    if (normal.lengthSq() < 0.001) {
+      const fromPrevious = previous.clone().sub(new THREE.Vector3(obstacle.x, 0, obstacle.z));
+      normal.set(fromPrevious.x, 0, fromPrevious.z);
+      if (normal.lengthSq() < 0.001) normal.set(0, 0, 1);
+    }
+    normal.normalize();
+    const penetration = CAR_RADIUS - Math.sqrt(Math.max(distSq, 0.0001));
+    car.position.addScaledVector(normal, penetration + 0.04);
+
+    const velocity = carVelocity(car);
+    const normalSpeed = velocity.dot(normal);
+    if (normalSpeed < 0) {
+      velocity.addScaledVector(normal, -(1 + BUILDING_BOUNCE) * normalSpeed);
+    }
+    car.userData.speed = Math.min(0, velocity.dot(getForward(car))) * 0.35;
+    car.userData.velocity.copy(velocity.multiplyScalar(0.25));
+    hit = true;
+  }
+  if (hit && Math.abs(car.userData.speed) < 1.2) car.userData.speed = 0;
 }
 
 function keepNearRoad(car) {
@@ -626,6 +705,13 @@ function wrapBot(bot) {
 
 function getForward(car) {
   return new THREE.Vector3(Math.sin(car.rotation.y), 0, Math.cos(car.rotation.y));
+}
+
+function carVelocity(car) {
+  if (car.userData.velocity && car.userData.velocity.lengthSq() > 0.001) {
+    return car.userData.velocity.clone();
+  }
+  return getForward(car).multiplyScalar(car.userData.speed || 0);
 }
 
 function yawForDir(dir) {
