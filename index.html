@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DriveNow</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="hud">
+      <div class="brand">DriveNow</div>
+      <div class="readout">
+        <span id="speed">0 mph</span>
+        <span id="signal">Signals off</span>
+        <span id="status">City clear</span>
+      </div>
+    </div>
+    <button id="restart" type="button" hidden>Restart city</button>
+    <div id="loading">Loading city...</div>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.164.1/build/three.module.js"
+        }
+      }
+    </script>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
