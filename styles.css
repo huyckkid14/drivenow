@@ -42,6 +42,29 @@ canvas {
   backdrop-filter: blur(10px);
 }
 
+.controls {
+  display: flex;
+  gap: 6px;
+}
+
+.controls button {
+  min-height: 28px;
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #f6fbf4;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.controls button.active {
+  background: #ffcc33;
+  color: #171713;
+}
+
 .brand {
   flex: 0 0 auto;
   font-size: 18px;
@@ -98,6 +121,10 @@ canvas {
     align-items: flex-start;
     flex-direction: column;
     gap: 8px;
+  }
+
+  .controls {
+    flex-wrap: wrap;
   }
 
   .readout span {

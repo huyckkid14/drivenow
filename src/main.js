@@ -17,6 +17,9 @@ const signalEl = document.querySelector("#signal");
 const statusEl = document.querySelector("#status");
 const restartBtn = document.querySelector("#restart");
 const loadingEl = document.querySelector("#loading");
+const leftSignalBtn = document.querySelector("#leftSignal");
+const rightSignalBtn = document.querySelector("#rightSignal");
+const hazardsBtn = document.querySelector("#hazards");
 
 const clock = new THREE.Clock();
 const keys = new Set();
@@ -46,6 +49,9 @@ const state = {
   signal: "off",
   hazard: false,
   time: 0,
+  audio: null,
+  lastCrashSound: -10,
+  toggleHeld: new Set(),
 };
 
 const dirs = {
@@ -90,12 +96,19 @@ function init() {
   createBots();
   createSkylineDetails();
 
-  window.addEventListener("keydown", onKeyDown);
-  window.addEventListener("keyup", (event) => keys.delete(event.key.toLowerCase()));
+  window.addEventListener("keydown", onKeyDown, { capture: true });
+  window.addEventListener("keypress", onKeyPress, { capture: true });
+  window.addEventListener("keyup", onKeyUp, { capture: true });
   window.addEventListener("resize", onResize);
   renderer.domElement.tabIndex = 0;
-  renderer.domElement.addEventListener("click", () => renderer.domElement.focus());
+  renderer.domElement.addEventListener("pointerdown", () => {
+    renderer.domElement.focus();
+    ensureAudio();
+  });
   renderer.domElement.focus();
+  leftSignalBtn.addEventListener("click", () => toggleSignal("left"));
+  rightSignalBtn.addEventListener("click", () => toggleSignal("right"));
+  hazardsBtn.addEventListener("click", toggleHazards);
   restartBtn.addEventListener("click", restartCity);
   loadingEl.hidden = true;
 }
@@ -255,9 +268,11 @@ function createPlayer() {
     hazard: false,
     blink: 0,
     steer: 0,
+    braking: false,
     velocity: new THREE.Vector3(),
     lastSafe: player.position.clone(),
     indicators: player.userData.indicators,
+    brakeLights: player.userData.brakeLights,
   };
   city.add(player);
   cars.push(player);
@@ -293,8 +308,10 @@ function createBots() {
       immobilized: false,
       hazard: false,
       blink: Math.random(),
+      braking: false,
       velocity: new THREE.Vector3(),
       indicators: bot.userData.indicators,
+      brakeLights: bot.userData.brakeLights,
     };
     city.add(bot);
     cars.push(bot);
@@ -309,6 +326,7 @@ function makeCar(color, isPlayer) {
   const tireMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 });
   const lightMat = new THREE.MeshStandardMaterial({ color: 0xffd166, emissive: 0xffa400, emissiveIntensity: 0 });
   const rearMat = new THREE.MeshStandardMaterial({ color: 0xff3333, emissive: 0xff1111, emissiveIntensity: 0.15 });
+  const brakeMat = new THREE.MeshStandardMaterial({ color: 0x9d1010, emissive: 0xff1515, emissiveIntensity: 0.12 });
 
   const body = new THREE.Mesh(new THREE.BoxGeometry(2.35, 0.72, 4.1), bodyMat);
   body.position.y = 0.65;
@@ -326,6 +344,7 @@ function makeCar(color, isPlayer) {
   car.add(nose);
 
   const indicators = [];
+  const brakeLights = [];
   for (const [x, z] of [
     [-1.05, 2.12],
     [1.05, 2.12],
@@ -336,6 +355,13 @@ function makeCar(color, isPlayer) {
     lamp.position.set(x, 0.82, z);
     car.add(lamp);
     indicators.push(lamp);
+  }
+
+  for (const x of [-0.62, 0.62]) {
+    const brake = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.26, 0.16), brakeMat.clone());
+    brake.position.set(x, 0.86, -2.14);
+    car.add(brake);
+    brakeLights.push(brake);
   }
 
   for (const [x, z] of [
@@ -362,6 +388,7 @@ function makeCar(color, isPlayer) {
   }
 
   car.userData.indicators = indicators;
+  car.userData.brakeLights = brakeLights;
   return car;
 }
 
@@ -425,6 +452,7 @@ function updatePlayer(dt) {
   const accel = throttle * 18;
   const brake = brakeKey * (data.speed > 0.2 ? 34 : 13);
   const drag = 4.2 + Math.abs(data.speed) * 0.1;
+  data.braking = Boolean(brakeKey || (!throttle && data.speed > 4));
   data.speed += accel * dt;
   data.speed -= brake * dt;
   if (!throttle && !brakeKey) data.speed -= Math.sign(data.speed) * drag * dt;
@@ -455,6 +483,7 @@ function updateBots(dt) {
     const redBlocked = mustStopForSignal(bot);
     const targetSpeed = frontBlocked || redBlocked ? 0 : data.desiredSpeed;
     const rate = targetSpeed < data.speed ? 22 : 7;
+    data.braking = targetSpeed < data.speed - 0.5;
     data.speed = moveToward(data.speed, targetSpeed, rate * dt);
 
     maybeTurnAtIntersection(bot);
@@ -560,9 +589,11 @@ function immobilizeCollision(a, b, dt) {
   for (const car of [a, b]) {
     car.userData.speed = 0;
     car.userData.velocity.set(0, 0, 0);
+    car.userData.braking = true;
     car.userData.immobilized = true;
     car.userData.hazard = true;
   }
+  playCrashSound(Math.min(1, velocityA.clone().sub(velocityB).length() / 30));
   state.crashed = true;
   if (a.userData.player || b.userData.player) {
     state.playerCrashed = true;
@@ -584,12 +615,21 @@ function updateSignals(dt) {
     setLamp(lamps[2], left && on);
     setLamp(lamps[1], right && on);
     setLamp(lamps[3], right && on);
+    setBrakeLights(data.brakeLights, data.braking || data.immobilized);
   }
 }
 
 function setLamp(lamp, active) {
   lamp.material.emissiveIntensity = active ? 2.8 : 0;
   lamp.material.color.set(active ? 0xffb000 : 0xffd166);
+}
+
+function setBrakeLights(lamps, active) {
+  for (const lamp of lamps) {
+    lamp.material.emissiveIntensity = active ? 3.4 : 0.12;
+    lamp.material.color.set(active ? 0xff2020 : 0x9d1010);
+    lamp.scale.z = active ? 1.65 : 1;
+  }
 }
 
 function updateCamera(dt) {
@@ -611,30 +651,126 @@ function updateHud() {
   else if (state.signal === "left") signalEl.textContent = "Left indicator";
   else if (state.signal === "right") signalEl.textContent = "Right indicator";
   else signalEl.textContent = "Signals off";
+  leftSignalBtn.classList.toggle("active", !state.hazard && state.signal === "left");
+  rightSignalBtn.classList.toggle("active", !state.hazard && state.signal === "right");
+  hazardsBtn.classList.toggle("active", state.hazard || state.player.userData.hazard);
   if (!state.playerCrashed) {
     statusEl.textContent = state.crashed ? "Crash in city" : "City clear";
   }
 }
 
 function onKeyDown(event) {
-  const key = event.key.toLowerCase();
+  const key = normalizeKey(event);
+  if (!key) return;
+  ensureAudio();
   keys.add(key);
   if (["arrowup", "arrowdown", "arrowleft", "arrowright", "q", "r", "z"].includes(key)) {
     event.preventDefault();
+    event.stopPropagation();
   }
   if (event.repeat && ["q", "r", "z"].includes(key)) return;
-  if (key === "q") {
-    state.signal = state.signal === "left" ? "off" : "left";
-    state.hazard = false;
+  if (state.toggleHeld.has(key)) return;
+  if (key === "q") toggleSignal("left");
+  if (key === "r") toggleSignal("right");
+  if (key === "z") toggleHazards();
+  if (["q", "r", "z"].includes(key)) state.toggleHeld.add(key);
+}
+
+function onKeyPress(event) {
+  const key = normalizeKey(event);
+  if (!["q", "r", "z"].includes(key)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (state.toggleHeld.has(key)) return;
+  if (key === "q") toggleSignal("left");
+  if (key === "r") toggleSignal("right");
+  if (key === "z") toggleHazards();
+  state.toggleHeld.add(key);
+}
+
+function onKeyUp(event) {
+  const key = normalizeKey(event);
+  if (!key) return;
+  keys.delete(key);
+  state.toggleHeld.delete(key);
+}
+
+function normalizeKey(event) {
+  const byCode = {
+    ArrowUp: "arrowup",
+    ArrowDown: "arrowdown",
+    ArrowLeft: "arrowleft",
+    ArrowRight: "arrowright",
+    KeyQ: "q",
+    KeyR: "r",
+    KeyZ: "z",
+  };
+  if (byCode[event.code]) return byCode[event.code];
+  return event.key ? event.key.toLowerCase() : "";
+}
+
+function toggleSignal(direction) {
+  state.signal = state.signal === direction ? "off" : direction;
+  state.hazard = false;
+  renderer.domElement.focus();
+}
+
+function toggleHazards() {
+  state.hazard = !state.hazard;
+  state.signal = "off";
+  renderer.domElement.focus();
+}
+
+function ensureAudio() {
+  if (state.audio) return state.audio;
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return null;
+  state.audio = new AudioContext();
+  return state.audio;
+}
+
+function playCrashSound(force = 0.7) {
+  if (state.time - state.lastCrashSound < 0.35) return;
+  state.lastCrashSound = state.time;
+  const audio = ensureAudio();
+  if (!audio) return;
+  if (audio.state === "suspended") audio.resume();
+
+  const duration = 0.38;
+  const now = audio.currentTime;
+  const gain = audio.createGain();
+  const filter = audio.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.setValueAtTime(1050 + force * 650, now);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.16 + force * 0.24, now + 0.025);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+  filter.connect(gain);
+  gain.connect(audio.destination);
+
+  const sampleCount = Math.floor(audio.sampleRate * duration);
+  const buffer = audio.createBuffer(1, sampleCount, audio.sampleRate);
+  const samples = buffer.getChannelData(0);
+  for (let i = 0; i < sampleCount; i++) {
+    const t = i / sampleCount;
+    samples[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 2.2);
   }
-  if (key === "r") {
-    state.signal = state.signal === "right" ? "off" : "right";
-    state.hazard = false;
-  }
-  if (key === "z") {
-    state.hazard = !state.hazard;
-    state.signal = "off";
-  }
+  const noise = audio.createBufferSource();
+  noise.buffer = buffer;
+  noise.connect(filter);
+  noise.start(now);
+
+  const thud = audio.createOscillator();
+  const thudGain = audio.createGain();
+  thud.type = "triangle";
+  thud.frequency.setValueAtTime(92 + force * 35, now);
+  thud.frequency.exponentialRampToValueAtTime(34, now + 0.22);
+  thudGain.gain.setValueAtTime(0.18 + force * 0.18, now);
+  thudGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+  thud.connect(thudGain);
+  thudGain.connect(audio.destination);
+  thud.start(now);
+  thud.stop(now + 0.25);
 }
 
 function restartCity() {
