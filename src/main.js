@@ -38,8 +38,10 @@ const LANES = [-1.75, 1.75];
 const GRID = [-54, -27, 0, 27, 54];
 const BOUNDS = 68;
 const CAR_RADIUS = 2.35;
+const CAR_HALF_WIDTH = 1.23;
+const CAR_HALF_LENGTH = 2.12;
 const STOP_DISTANCE = 11.5;
-const COLLISION_DISTANCE = 2.75;
+const COLLISION_BROAD_PHASE = 5.3;
 const BUILDING_BOUNCE = 0.18;
 const TRAFFIC_CYCLE = 10;
 
@@ -291,18 +293,7 @@ function createPlayer() {
 }
 
 function createBots() {
-  const starts = [
-    { x: -60, z: 1.75, dir: "east" },
-    { x: 60, z: -25.25, dir: "west" },
-    { x: -1.75, z: 60, dir: "north" },
-    { x: 25.25, z: -60, dir: "south" },
-    { x: -60, z: 28.75, dir: "east" },
-    { x: 60, z: 52.25, dir: "west" },
-    { x: -28.75, z: -60, dir: "south" },
-    { x: 52.25, z: 60, dir: "north" },
-    { x: -60, z: -52.25, dir: "east" },
-    { x: 1.75, z: -60, dir: "south" },
-  ];
+  const starts = makeBotStarts();
 
   starts.forEach((start, index) => {
     const bot = makeCar(botColors[index % botColors.length], false);
@@ -327,6 +318,30 @@ function createBots() {
     cars.push(bot);
     collidableCars.push(bot);
   });
+}
+
+function makeBotStarts() {
+  const starts = [];
+  for (const z of GRID) {
+    starts.push({ x: -64, z: z + LANES[1], dir: "east" });
+    starts.push({ x: 64, z: z + LANES[0], dir: "west" });
+  }
+  for (const x of GRID) {
+    starts.push({ x: x + LANES[0], z: 64, dir: "north" });
+    starts.push({ x: x + LANES[1], z: -64, dir: "south" });
+  }
+
+  const extra = [
+    { x: -37, z: 1.75, dir: "east" },
+    { x: 35, z: -1.75, dir: "west" },
+    { x: -25.25, z: 38, dir: "north" },
+    { x: 28.75, z: -36, dir: "south" },
+    { x: -42, z: 28.75, dir: "east" },
+    { x: 44, z: 25.25, dir: "west" },
+    { x: -55.75, z: 42, dir: "north" },
+    { x: 55.75, z: -42, dir: "south" },
+  ];
+  return starts.concat(extra);
 }
 
 function makeCar(color, isPlayer) {
@@ -562,7 +577,7 @@ function findCarAhead(car, distance) {
     const ahead = delta.dot(forward);
     if (ahead <= 0 || ahead > distance) continue;
     const side = delta.lengthSq() - ahead * ahead;
-    if (side < 8) return other;
+    if (side < 6.1) return other;
   }
   return null;
 }
@@ -573,22 +588,19 @@ function updateCollisions(dt) {
       const a = collidableCars[i];
       const b = collidableCars[j];
       if (a.userData.immobilized && b.userData.immobilized) continue;
-      const dist = a.position.distanceTo(b.position);
-      if (dist > COLLISION_DISTANCE) continue;
-      immobilizeCollision(a, b, dt);
+      if (a.position.distanceTo(b.position) > COLLISION_BROAD_PHASE) continue;
+      const hit = carCollision(a, b);
+      if (!hit) continue;
+      immobilizeCollision(a, b, dt, hit);
     }
   }
 }
 
-function immobilizeCollision(a, b, dt) {
-  const normal = a.position.clone().sub(b.position);
-  if (normal.lengthSq() < 0.001) normal.copy(getForward(a));
-  normal.y = 0;
-  normal.normalize();
-
-  const overlap = Math.max(0, COLLISION_DISTANCE - a.position.distanceTo(b.position));
-  a.position.addScaledVector(normal, overlap * 0.55 + 0.35);
-  b.position.addScaledVector(normal, -overlap * 0.55 - 0.35);
+function immobilizeCollision(a, b, dt, hit) {
+  const normal = hit.normal.clone();
+  const overlap = hit.depth;
+  a.position.addScaledVector(normal, overlap * 0.52 + 0.18);
+  b.position.addScaledVector(normal, -overlap * 0.52 - 0.18);
 
   const velocityA = carVelocity(a);
   const velocityB = carVelocity(b);
@@ -617,6 +629,48 @@ function immobilizeCollision(a, b, dt) {
     restartBtn.hidden = false;
     statusEl.textContent = "Crash - restart ready";
   }
+}
+
+function carCollision(a, b) {
+  const boxA = carBox(a);
+  const boxB = carBox(b);
+  const axes = [boxA.right, boxA.forward, boxB.right, boxB.forward];
+  let minOverlap = Infinity;
+  let bestAxis = null;
+
+  for (const axis of axes) {
+    const rangeA = projectBox(boxA, axis);
+    const rangeB = projectBox(boxB, axis);
+    const overlap = Math.min(rangeA.max, rangeB.max) - Math.max(rangeA.min, rangeB.min);
+    if (overlap <= 0) return null;
+    if (overlap < minOverlap) {
+      minOverlap = overlap;
+      bestAxis = axis;
+    }
+  }
+
+  const centerDelta = a.position.clone().sub(b.position);
+  if (centerDelta.dot(bestAxis) < 0) bestAxis = bestAxis.clone().multiplyScalar(-1);
+  return { normal: bestAxis.clone().normalize(), depth: minOverlap };
+}
+
+function carBox(car) {
+  const forward = getForward(car).normalize();
+  const right = new THREE.Vector3(forward.z, 0, -forward.x);
+  return {
+    center: car.position.clone(),
+    forward,
+    right,
+    halfWidth: CAR_HALF_WIDTH,
+    halfLength: CAR_HALF_LENGTH,
+  };
+}
+
+function projectBox(box, axis) {
+  const center = box.center.dot(axis);
+  const radius =
+    Math.abs(box.right.dot(axis)) * box.halfWidth + Math.abs(box.forward.dot(axis)) * box.halfLength;
+  return { min: center - radius, max: center + radius };
 }
 
 function updateSignals(dt) {
