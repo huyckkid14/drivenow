@@ -43,6 +43,8 @@ const CAR_HALF_LENGTH = 2.12;
 const STOP_DISTANCE = 11.5;
 const COLLISION_BROAD_PHASE = 5.3;
 const BUILDING_BOUNCE = 0.18;
+const CRASH_FRICTION = 4.8;
+const CRASH_SPIN_FRICTION = 3.6;
 const TRAFFIC_CYCLE = 10;
 
 const state = {
@@ -282,6 +284,9 @@ function createPlayer() {
     steer: 0,
     braking: false,
     velocity: new THREE.Vector3(),
+    angularVelocity: 0,
+    crashed: false,
+    crashTimer: 0,
     lastSafe: player.position.clone(),
     indicators: player.userData.indicators,
     brakeLights: player.userData.brakeLights,
@@ -311,6 +316,9 @@ function createBots() {
       blink: Math.random(),
       braking: false,
       velocity: new THREE.Vector3(),
+      angularVelocity: 0,
+      crashed: false,
+      crashTimer: 0,
       indicators: bot.userData.indicators,
       brakeLights: bot.userData.brakeLights,
     };
@@ -445,6 +453,7 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.045);
   state.time += dt;
   updateTrafficLights();
+  updateCrashPhysics(dt);
   updatePlayer(dt);
   updateBots(dt);
   updateCollisions(dt);
@@ -474,7 +483,7 @@ function updateTrafficLights() {
 function updatePlayer(dt) {
   const car = state.player;
   const data = car.userData;
-  if (data.immobilized) return;
+  if (data.immobilized || data.crashed) return;
 
   const throttle = keys.has("arrowup") ? 1 : 0;
   const brakeKey = keys.has("arrowdown") ? 1 : 0;
@@ -509,7 +518,7 @@ function updatePlayer(dt) {
 function updateBots(dt) {
   for (const bot of cars) {
     const data = bot.userData;
-    if (data.player || data.immobilized) continue;
+    if (data.player || data.immobilized || data.crashed) continue;
 
     const frontBlocked = findCarAhead(bot, 14);
     const redBlocked = mustStopForSignal(bot);
@@ -588,15 +597,16 @@ function updateCollisions(dt) {
       const a = collidableCars[i];
       const b = collidableCars[j];
       if (a.userData.immobilized && b.userData.immobilized) continue;
+      if (a.userData.crashed && b.userData.crashed) continue;
       if (a.position.distanceTo(b.position) > COLLISION_BROAD_PHASE) continue;
       const hit = carCollision(a, b);
       if (!hit) continue;
-      immobilizeCollision(a, b, dt, hit);
+      applyCrashImpulse(a, b, dt, hit);
     }
   }
 }
 
-function immobilizeCollision(a, b, dt, hit) {
+function applyCrashImpulse(a, b, dt, hit) {
   const normal = hit.normal.clone();
   const overlap = hit.depth;
   a.position.addScaledVector(normal, overlap * 0.52 + 0.18);
@@ -606,28 +616,64 @@ function immobilizeCollision(a, b, dt, hit) {
   const velocityB = carVelocity(b);
   const relativeVelocity = velocityA.clone().sub(velocityB);
   const closingSpeed = Math.max(0, -relativeVelocity.dot(normal));
-  const impulse = normal.clone().multiplyScalar(closingSpeed * 0.62 + relativeVelocity.length() * 0.18);
-  a.position.addScaledVector(impulse, dt * 0.36);
-  b.position.addScaledVector(impulse, -dt * 0.36);
-
+  const restitution = 0.32;
+  const impulseMag = Math.max(3.8, closingSpeed * (1 + restitution) * 0.55 + relativeVelocity.length() * 0.14);
+  const impulse = normal.clone().multiplyScalar(impulseMag);
   const tangent = new THREE.Vector3(-normal.z, 0, normal.x);
-  const spin = THREE.MathUtils.clamp(relativeVelocity.dot(tangent) * 0.045, -0.7, 0.7);
-  a.rotation.y += spin;
-  b.rotation.y -= spin;
+  const scrape = tangent.multiplyScalar(THREE.MathUtils.clamp(relativeVelocity.dot(tangent) * 0.26, -5.5, 5.5));
 
-  for (const car of [a, b]) {
-    car.userData.speed = 0;
-    car.userData.velocity.set(0, 0, 0);
-    car.userData.braking = true;
-    car.userData.immobilized = true;
-    car.userData.hazard = true;
-  }
+  const postA = velocityA.clone().add(impulse).add(scrape);
+  const postB = velocityB.clone().addScaledVector(impulse, -1).addScaledVector(scrape, -1);
+  const spin = THREE.MathUtils.clamp(relativeVelocity.dot(new THREE.Vector3(-normal.z, 0, normal.x)) * 0.09, -2.8, 2.8);
+
+  startCrashSlide(a, postA, spin);
+  startCrashSlide(b, postB, -spin);
   playCrashSound(Math.min(1, velocityA.clone().sub(velocityB).length() / 30));
   state.crashed = true;
   if (a.userData.player || b.userData.player) {
     state.playerCrashed = true;
     restartBtn.hidden = false;
     statusEl.textContent = "Crash - restart ready";
+  }
+}
+
+function startCrashSlide(car, velocity, angularVelocity) {
+  const data = car.userData;
+  data.speed = 0;
+  data.velocity.copy(velocity).clampLength(2.5, 24);
+  data.angularVelocity = THREE.MathUtils.clamp((data.angularVelocity || 0) + angularVelocity, -3.6, 3.6);
+  data.braking = true;
+  data.crashed = true;
+  data.immobilized = false;
+  data.hazard = true;
+  data.crashTimer = 0;
+}
+
+function updateCrashPhysics(dt) {
+  for (const car of collidableCars) {
+    const data = car.userData;
+    if (!data.crashed || data.immobilized) continue;
+
+    const previous = car.position.clone();
+    car.position.addScaledVector(data.velocity, dt);
+    car.rotation.y += data.angularVelocity * dt;
+    resolveBuildingCollisions(car, previous);
+    car.position.x = THREE.MathUtils.clamp(car.position.x, -BOUNDS, BOUNDS);
+    car.position.z = THREE.MathUtils.clamp(car.position.z, -BOUNDS, BOUNDS);
+
+    const speed = data.velocity.length();
+    const nextSpeed = Math.max(0, speed - CRASH_FRICTION * dt);
+    if (speed > 0.001) data.velocity.multiplyScalar(nextSpeed / speed);
+    data.angularVelocity = moveToward(data.angularVelocity, 0, CRASH_SPIN_FRICTION * dt);
+    data.crashTimer += dt;
+
+    if (data.crashTimer > 0.45 && data.velocity.length() < 0.35 && Math.abs(data.angularVelocity) < 0.12) {
+      data.velocity.set(0, 0, 0);
+      data.angularVelocity = 0;
+      data.immobilized = true;
+      data.crashed = false;
+      data.braking = true;
+    }
   }
 }
 
