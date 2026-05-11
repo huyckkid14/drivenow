@@ -41,12 +41,11 @@ const CAR_RADIUS = 2.35;
 const CAR_HALF_WIDTH = 1.23;
 const CAR_HALF_LENGTH = 2.12;
 const STOP_DISTANCE = 11.5;
-const STOP_LINE_OFFSET = ROAD_HALF + 3.1;
 const COLLISION_BROAD_PHASE = 5.3;
 const BUILDING_BOUNCE = 0.18;
 const CRASH_FRICTION = 4.8;
 const CRASH_SPIN_FRICTION = 3.6;
-const TRAFFIC_CYCLE = 12;
+const TRAFFIC_CYCLE = 10;
 
 const state = {
   crashed: false,
@@ -466,15 +465,12 @@ function animate() {
 
 function updateTrafficLights() {
   const phase = state.time % TRAFFIC_CYCLE;
-  let ewState = "red";
-  let nsState = "red";
-  if (phase < 4.8) ewState = "green";
-  else if (phase < 6) ewState = "yellow";
-  else if (phase < 10.8) nsState = "green";
-  else nsState = "yellow";
-
+  const ewGreen = phase < 4.5;
+  const yellow = phase >= 4.5 && phase < 5.5;
   for (const light of trafficLights) {
-    light.state = light.axis === "ew" ? ewState : nsState;
+    const green = light.axis === "ew" ? ewGreen : !ewGreen && phase >= 5.5;
+    const caution = light.axis === "ew" ? yellow : phase >= 9 && phase < 10;
+    light.state = green ? "green" : caution ? "yellow" : "red";
     light.red.material.emissiveIntensity = light.state === "red" ? 1.8 : 0.08;
     light.yellow.material.emissiveIntensity = light.state === "yellow" ? 1.7 : 0.08;
     light.green.material.emissiveIntensity = light.state === "green" ? 1.6 : 0.08;
@@ -573,10 +569,9 @@ function mustStopForSignal(bot) {
   const axis = data.dir === "east" || data.dir === "west" ? "ew" : "ns";
   const ix = nearestGrid(bot.position.x);
   const iz = nearestGrid(bot.position.z);
-  const stopLine = new THREE.Vector3(ix, 0, iz).addScaledVector(forward, -STOP_LINE_OFFSET);
-  const toStop = stopLine.sub(bot.position);
+  const toStop = new THREE.Vector3(ix - bot.position.x, 0, iz - bot.position.z);
   const ahead = toStop.dot(forward);
-  if (ahead < -0.8 || ahead > STOP_DISTANCE + STOP_LINE_OFFSET) return false;
+  if (ahead < 1.8 || ahead > STOP_DISTANCE) return false;
   const laneAligned = axis === "ew" ? Math.abs(bot.position.z - iz) < ROAD_HALF : Math.abs(bot.position.x - ix) < ROAD_HALF;
   if (!laneAligned) return false;
   const light = trafficLights.find((item) => item.x === ix && item.z === iz && item.axis === axis);
