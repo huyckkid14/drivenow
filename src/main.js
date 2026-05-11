@@ -209,21 +209,31 @@ function createTrafficLights() {
   for (const x of GRID) {
     for (const z of GRID) {
       const poleMat = new THREE.MeshStandardMaterial({ color: 0x28312f, roughness: 0.6 });
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 4.9, 12), poleMat);
-      pole.position.set(x + 6.4, 2.1, z + 6.4);
-      pole.castShadow = true;
-      city.add(pole);
+      const corners = [
+        { px: x - 6.3, pz: z - 6.3, axis: "ns", yaw: 0, lx: x - 6.3, lz: z - 3.75 },
+        { px: x + 6.3, pz: z + 6.3, axis: "ns", yaw: Math.PI, lx: x + 6.3, lz: z + 3.75 },
+        { px: x - 6.3, pz: z + 6.3, axis: "ew", yaw: -Math.PI / 2, lx: x - 3.75, lz: z + 6.3 },
+        { px: x + 6.3, pz: z - 6.3, axis: "ew", yaw: Math.PI / 2, lx: x + 3.75, lz: z - 6.3 },
+      ];
 
-      const armA = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 3.2), poleMat);
-      armA.position.set(x + 6.4, 4.78, z + 4.9);
-      const armB = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.18, 0.18), poleMat);
-      armB.position.set(x + 4.9, 4.78, z + 6.4);
-      city.add(armA, armB);
+      for (const corner of corners) {
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 4.9, 12), poleMat);
+        pole.position.set(corner.px, 2.1, corner.pz);
+        pole.castShadow = true;
+        city.add(pole);
 
-      const nsLight = makeSignalLamp(x, z, "ns", new THREE.Vector3(x + 6.42, 4.42, z + 3.75));
-      const ewLight = makeSignalLamp(x, z, "ew", new THREE.Vector3(x + 3.75, 4.42, z + 6.42));
-      ewLight.group.rotation.y = Math.PI / 2;
-      trafficLights.push(nsLight, ewLight);
+        const armLength = Math.abs(corner.lx - corner.px) > Math.abs(corner.lz - corner.pz) ? "x" : "z";
+        const arm = new THREE.Mesh(
+          new THREE.BoxGeometry(armLength === "x" ? 2.8 : 0.18, 0.18, armLength === "z" ? 2.8 : 0.18),
+          poleMat,
+        );
+        arm.position.set((corner.px + corner.lx) / 2, 4.78, (corner.pz + corner.lz) / 2);
+        city.add(arm);
+
+        const light = makeSignalLamp(x, z, corner.axis, new THREE.Vector3(corner.lx, 4.42, corner.lz));
+        light.group.rotation.y = corner.yaw;
+        trafficLights.push(light);
+      }
     }
   }
 }
@@ -348,14 +358,14 @@ function makeCar(color, isPlayer) {
   const indicators = [];
   const brakeLights = [];
   for (const spec of [
-    { side: "left", x: -1.23, z: 1.72, rot: Math.PI / 2 },
-    { side: "left", x: -1.23, z: -1.72, rot: Math.PI / 2 },
-    { side: "right", x: 1.23, z: 1.72, rot: Math.PI / 2 },
-    { side: "right", x: 1.23, z: -1.72, rot: Math.PI / 2 },
-    { side: "left", x: -0.96, z: 2.18, rot: 0 },
-    { side: "right", x: 0.96, z: 2.18, rot: 0 },
-    { side: "left", x: -0.96, z: -2.18, rot: 0 },
-    { side: "right", x: 0.96, z: -2.18, rot: 0 },
+    { side: "left", x: 1.23, z: 1.72, rot: Math.PI / 2 },
+    { side: "left", x: 1.23, z: -1.72, rot: Math.PI / 2 },
+    { side: "right", x: -1.23, z: 1.72, rot: Math.PI / 2 },
+    { side: "right", x: -1.23, z: -1.72, rot: Math.PI / 2 },
+    { side: "left", x: 0.96, z: 2.18, rot: 0 },
+    { side: "right", x: -0.96, z: 2.18, rot: 0 },
+    { side: "left", x: 0.96, z: -2.18, rot: 0 },
+    { side: "right", x: -0.96, z: -2.18, rot: 0 },
   ]) {
     const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.22, 0.14), lightMat.clone());
     lamp.position.set(spec.x, 0.86, spec.z);
@@ -671,26 +681,26 @@ function onKeyDown(event) {
   if (!key) return;
   ensureAudio();
   keys.add(key);
-  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "q", "r", "z"].includes(key)) {
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "q", "e", "z"].includes(key)) {
     event.preventDefault();
     event.stopPropagation();
   }
-  if (event.repeat && ["q", "r", "z"].includes(key)) return;
+  if (event.repeat && ["q", "e", "z"].includes(key)) return;
   if (state.toggleHeld.has(key)) return;
   if (key === "q") toggleSignal("left");
-  if (key === "r") toggleSignal("right");
+  if (key === "e") toggleSignal("right");
   if (key === "z") toggleHazards();
-  if (["q", "r", "z"].includes(key)) state.toggleHeld.add(key);
+  if (["q", "e", "z"].includes(key)) state.toggleHeld.add(key);
 }
 
 function onKeyPress(event) {
   const key = normalizeKey(event);
-  if (!["q", "r", "z"].includes(key)) return;
+  if (!["q", "e", "z"].includes(key)) return;
   event.preventDefault();
   event.stopPropagation();
   if (state.toggleHeld.has(key)) return;
   if (key === "q") toggleSignal("left");
-  if (key === "r") toggleSignal("right");
+  if (key === "e") toggleSignal("right");
   if (key === "z") toggleHazards();
   state.toggleHeld.add(key);
 }
@@ -709,7 +719,7 @@ function normalizeKey(event) {
     ArrowLeft: "arrowleft",
     ArrowRight: "arrowright",
     KeyQ: "q",
-    KeyR: "r",
+    KeyE: "e",
     KeyZ: "z",
   };
   if (byCode[event.code]) return byCode[event.code];
