@@ -325,7 +325,7 @@ function makeCar(color, isPlayer) {
   const cabinMat = new THREE.MeshStandardMaterial({ color: 0x1e3945, roughness: 0.24, metalness: 0.08 });
   const tireMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 });
   const lightMat = new THREE.MeshStandardMaterial({ color: 0xffd166, emissive: 0xffa400, emissiveIntensity: 0 });
-  const rearMat = new THREE.MeshStandardMaterial({ color: 0xff3333, emissive: 0xff1111, emissiveIntensity: 0.15 });
+  const headlightMat = new THREE.MeshStandardMaterial({ color: 0xf7f2d8, emissive: 0xfff0b0, emissiveIntensity: 0.75 });
   const brakeMat = new THREE.MeshStandardMaterial({ color: 0x9d1010, emissive: 0xff1515, emissiveIntensity: 0.12 });
 
   const body = new THREE.Mesh(new THREE.BoxGeometry(2.35, 0.72, 4.1), bodyMat);
@@ -339,22 +339,29 @@ function makeCar(color, isPlayer) {
   cabin.castShadow = true;
   car.add(cabin);
 
-  const nose = new THREE.Mesh(new THREE.BoxGeometry(2.15, 0.35, 0.42), rearMat);
-  nose.position.set(0, 0.76, 2.12);
-  car.add(nose);
+  for (const x of [-0.58, 0.58]) {
+    const headlight = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.22, 0.16), headlightMat.clone());
+    headlight.position.set(x, 0.82, 2.14);
+    car.add(headlight);
+  }
 
   const indicators = [];
   const brakeLights = [];
-  for (const [x, z] of [
-    [-1.05, 2.12],
-    [1.05, 2.12],
-    [-1.05, -2.12],
-    [1.05, -2.12],
+  for (const spec of [
+    { side: "left", x: -1.23, z: 1.72, rot: Math.PI / 2 },
+    { side: "left", x: -1.23, z: -1.72, rot: Math.PI / 2 },
+    { side: "right", x: 1.23, z: 1.72, rot: Math.PI / 2 },
+    { side: "right", x: 1.23, z: -1.72, rot: Math.PI / 2 },
+    { side: "left", x: -0.96, z: 2.18, rot: 0 },
+    { side: "right", x: 0.96, z: 2.18, rot: 0 },
+    { side: "left", x: -0.96, z: -2.18, rot: 0 },
+    { side: "right", x: 0.96, z: -2.18, rot: 0 },
   ]) {
-    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.18), lightMat.clone());
-    lamp.position.set(x, 0.82, z);
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.22, 0.14), lightMat.clone());
+    lamp.position.set(spec.x, 0.86, spec.z);
+    lamp.rotation.y = spec.rot;
     car.add(lamp);
-    indicators.push(lamp);
+    indicators.push({ side: spec.side, lamp });
   }
 
   for (const x of [-0.62, 0.62]) {
@@ -610,18 +617,18 @@ function updateSignals(dt) {
     const useHazard = data.hazard || (data.player && state.hazard);
     const left = useHazard || (data.player && state.signal === "left");
     const right = useHazard || (data.player && state.signal === "right");
-    const lamps = data.indicators;
-    setLamp(lamps[0], left && on);
-    setLamp(lamps[2], left && on);
-    setLamp(lamps[1], right && on);
-    setLamp(lamps[3], right && on);
+    setSignalLamps(data.indicators, left && on, right && on);
     setBrakeLights(data.brakeLights, data.braking || data.immobilized);
   }
 }
 
-function setLamp(lamp, active) {
-  lamp.material.emissiveIntensity = active ? 2.8 : 0;
-  lamp.material.color.set(active ? 0xffb000 : 0xffd166);
+function setSignalLamps(indicators, leftActive, rightActive) {
+  for (const indicator of indicators) {
+    const active = indicator.side === "left" ? leftActive : rightActive;
+    indicator.lamp.material.emissiveIntensity = active ? 4.5 : 0;
+    indicator.lamp.material.color.set(active ? 0xffb000 : 0xffd166);
+    indicator.lamp.scale.set(active ? 1.55 : 1, active ? 1.35 : 1, active ? 1.35 : 1);
+  }
 }
 
 function setBrakeLights(lamps, active) {
