@@ -696,9 +696,15 @@ function updateDriverReactions(dt) {
     const delta = player.position.clone().sub(bot.position);
     const distanceToPlayer = delta.length();
     const previousDistance = botData.lastPlayerDistance;
+    const botVelocity = dirs[botData.dir].clone().multiplyScalar(botData.speed || 0);
+    const relativeVelocity = data.velocity.clone().sub(botVelocity);
+    const closingSpeed = distanceToPlayer > 0.001 ? -delta.dot(relativeVelocity) / distanceToPlayer : 0;
+    const closestSoon = closestApproachDistance(delta, relativeVelocity);
     const suddenClose =
       previousDistance &&
       distanceToPlayer < 8.5 &&
+      closingSpeed > 2.4 &&
+      closestSoon < CAR_RADIUS * 1.7 &&
       (previousDistance - distanceToPlayer > 1.6 || (previousDistance > 11 && distanceToPlayer < 6.5));
     if (suddenClose) requestHonk(bot, "danger");
     botData.lastPlayerDistance = distanceToPlayer;
@@ -804,6 +810,13 @@ function requestHonk(car, kind = "short") {
   data.lastHonk = state.time;
   state.lastHonkSound = state.time;
   playHonkSound(kind);
+}
+
+function closestApproachDistance(delta, relativeVelocity) {
+  const speedSq = relativeVelocity.lengthSq();
+  if (speedSq < 0.001) return delta.length();
+  const t = THREE.MathUtils.clamp(-delta.dot(relativeVelocity) / speedSq, 0, 1.6);
+  return delta.clone().addScaledVector(relativeVelocity, t).length();
 }
 
 function updateCollisions(dt) {
