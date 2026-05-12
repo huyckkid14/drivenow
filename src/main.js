@@ -685,13 +685,14 @@ function updateDriverReactions(dt) {
   }
 
   const reversingTarget = findBotInReversePath(8.5);
-  if (reversingTarget) {
+  if (reversingTarget && !isWaitingAtRedLight(reversingTarget)) {
     requestHonk(reversingTarget, "danger");
   }
 
   for (const bot of cars) {
     const botData = bot.userData;
     if (botData.player || botData.immobilized || botData.crashed) continue;
+    const waitingAtRed = isWaitingAtRedLight(bot);
     const forward = dirs[botData.dir];
     const delta = player.position.clone().sub(bot.position);
     const distanceToPlayer = delta.length();
@@ -707,7 +708,7 @@ function updateDriverReactions(dt) {
       (botData.speed > 1 || closestSoon < CAR_RADIUS * 0.9) &&
       closestSoon < CAR_RADIUS * 1.28 &&
       (previousDistance - distanceToPlayer > 1.6 || (previousDistance > 11 && distanceToPlayer < 6.5));
-    if (suddenClose) requestHonk(bot, "danger");
+    if (suddenClose && !waitingAtRed) requestHonk(bot, "danger");
     botData.lastPlayerDistance = distanceToPlayer;
 
     const ahead = delta.dot(forward);
@@ -717,8 +718,13 @@ function updateDriverReactions(dt) {
     const playerForward = getForward(player);
     const crossing = Math.abs(playerForward.dot(forward)) < 0.72;
     const abruptBlock = botData.speed > Math.max(4, Math.abs(data.speed) + 4);
-    if (crossing || abruptBlock) requestHonk(bot, "angry");
+    if ((crossing || abruptBlock) && !waitingAtRed) requestHonk(bot, "angry");
   }
+}
+
+function isWaitingAtRedLight(bot) {
+  const data = bot.userData;
+  return Math.abs(data.speed || 0) < 1.1 && Boolean(stopInfoForSignal(bot));
 }
 
 function playerSignalInfo() {
