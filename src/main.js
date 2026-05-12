@@ -27,6 +27,7 @@ const cars = [];
 const trafficLights = [];
 const roadSegments = [];
 const collidableCars = [];
+const damagePieces = [];
 const buildingObstacles = [];
 const buildings = new THREE.Group();
 const roads = new THREE.Group();
@@ -52,6 +53,8 @@ const COLLISION_BROAD_PHASE = 5.3;
 const BUILDING_BOUNCE = 0.18;
 const CRASH_FRICTION = 4.8;
 const CRASH_SPIN_FRICTION = 3.6;
+const DAMAGE_GRAVITY = 16;
+const DAMAGE_FRICTION = 2.8;
 const TRAFFIC_CYCLE = (SIGNAL_GREEN_TIME + SIGNAL_YELLOW_TIME + SIGNAL_ALL_RED_TIME) * 2;
 
 const state = {
@@ -64,6 +67,11 @@ const state = {
   lastCrashSound: -10,
   lastHonkSound: -10,
   greenBlockTimer: 0,
+  worldDrag: {
+    active: false,
+    lastX: 0,
+    spinVelocity: 0,
+  },
   toggleHeld: new Set(),
 };
 
@@ -114,6 +122,10 @@ function init() {
   window.addEventListener("keyup", onKeyUp, { capture: true });
   window.addEventListener("resize", onResize);
   renderer.domElement.tabIndex = 0;
+  renderer.domElement.addEventListener("pointerdown", onPointerDown);
+  window.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", onPointerUp);
+  window.addEventListener("pointercancel", onPointerUp);
   renderer.domElement.addEventListener("pointerdown", () => {
     renderer.domElement.focus();
     ensureAudio();
@@ -296,6 +308,8 @@ function createPlayer() {
     angularVelocity: 0,
     crashed: false,
     crashTimer: 0,
+    lastDamage: -10,
+    bodyColor: 0xffd23f,
     lastSafe: player.position.clone(),
     indicators: player.userData.indicators,
     brakeLights: player.userData.brakeLights,
@@ -329,7 +343,9 @@ function createBots() {
       crashed: false,
       crashTimer: 0,
       lastHonk: -10,
+      lastDamage: -10,
       lastPlayerDistance: null,
+      bodyColor: botColors[index % botColors.length],
       indicators: bot.userData.indicators,
       brakeLights: bot.userData.brakeLights,
     };
@@ -465,6 +481,8 @@ function animate() {
   state.time += dt;
   updateTrafficLights();
   updateCrashPhysics(dt);
+  updateDamagePieces(dt);
+  updateWorldDrag(dt);
   updatePlayer(dt);
   updateBots(dt);
   updateDriverReactions(dt);
@@ -872,6 +890,8 @@ function applyCrashImpulse(a, b, dt, hit) {
   const postB = velocityB.clone().addScaledVector(impulse, -1).addScaledVector(scrape, -1);
   const spin = THREE.MathUtils.clamp(relativeVelocity.dot(new THREE.Vector3(-normal.z, 0, normal.x)) * 0.09, -2.8, 2.8);
 
+  spawnCollisionDamage(a, normal.clone().multiplyScalar(-1), postA, closingSpeed);
+  spawnCollisionDamage(b, normal, postB, closingSpeed);
   startCrashSlide(a, postA, spin);
   startCrashSlide(b, postB, -spin);
   playCrashSound(Math.min(1, velocityA.clone().sub(velocityB).length() / 30));
@@ -879,7 +899,94 @@ function applyCrashImpulse(a, b, dt, hit) {
   if (a.userData.player || b.userData.player) {
     state.playerCrashed = true;
     restartBtn.hidden = false;
-    statusEl.textContent = "Crash - restart ready";
+    statusEl.textContent = "Crash - drag to spin";
+  }
+}
+
+function spawnCollisionDamage(car, hitNormal, impactVelocity, closingSpeed) {
+  const data = car.userData;
+  if (state.time - data.lastDamage < 0.35) return;
+  data.lastDamage = state.time;
+
+  const localHit = hitNormal.clone().normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), -car.rotation.y);
+  const sideHit = Math.abs(localHit.x) > Math.abs(localHit.z);
+  const sideSign = sideHit ? Math.sign(localHit.x || 1) : Math.sign(localHit.z || 1);
+  const count = THREE.MathUtils.clamp(Math.ceil(closingSpeed / 4), 3, 7);
+  const color = data.bodyColor || 0x777777;
+
+  for (let i = 0; i < count; i++) {
+    const wide = 0.38 + Math.random() * 0.62;
+    const tall = 0.12 + Math.random() * 0.18;
+    const deep = 0.32 + Math.random() * 0.55;
+    const piece = new THREE.Mesh(
+      new THREE.BoxGeometry(sideHit ? tall : wide, tall, sideHit ? wide : tall),
+      new THREE.MeshStandardMaterial({
+        color: i % 3 === 0 ? 0x1f2427 : color,
+        roughness: 0.72,
+        metalness: 0.18,
+      }),
+    );
+
+    const local = sideHit
+      ? new THREE.Vector3(sideSign * (CAR_HALF_WIDTH + 0.08), 0.52 + Math.random() * 0.56, THREE.MathUtils.randFloatSpread(CAR_HALF_LENGTH * 1.55))
+      : new THREE.Vector3(THREE.MathUtils.randFloatSpread(CAR_HALF_WIDTH * 1.4), 0.52 + Math.random() * 0.56, sideSign * (CAR_HALF_LENGTH + 0.12));
+    car.localToWorld(local);
+    piece.position.copy(local);
+    piece.rotation.copy(car.rotation);
+    piece.castShadow = true;
+    piece.receiveShadow = true;
+    city.add(piece);
+
+    const outward = hitNormal.clone().normalize();
+    const velocity = impactVelocity
+      .clone()
+      .multiplyScalar(0.28 + Math.random() * 0.12)
+      .addScaledVector(outward, 3.2 + Math.random() * 5.5)
+      .add(new THREE.Vector3(THREE.MathUtils.randFloatSpread(2.2), 4.2 + Math.random() * 5.4, THREE.MathUtils.randFloatSpread(2.2)));
+
+    damagePieces.push({
+      mesh: piece,
+      velocity,
+      angularVelocity: new THREE.Vector3(
+        THREE.MathUtils.randFloatSpread(4.2),
+        THREE.MathUtils.randFloatSpread(5.5),
+        THREE.MathUtils.randFloatSpread(4.2),
+      ),
+      life: 8,
+      bounced: false,
+    });
+  }
+}
+
+function updateDamagePieces(dt) {
+  for (let i = damagePieces.length - 1; i >= 0; i--) {
+    const piece = damagePieces[i];
+    piece.velocity.y -= DAMAGE_GRAVITY * dt;
+    piece.mesh.position.addScaledVector(piece.velocity, dt);
+    piece.mesh.rotation.x += piece.angularVelocity.x * dt;
+    piece.mesh.rotation.y += piece.angularVelocity.y * dt;
+    piece.mesh.rotation.z += piece.angularVelocity.z * dt;
+
+    if (piece.mesh.position.y < 0.18) {
+      piece.mesh.position.y = 0.18;
+      if (!piece.bounced && Math.abs(piece.velocity.y) > 1.2) {
+        piece.velocity.y = Math.abs(piece.velocity.y) * 0.34;
+        piece.bounced = true;
+      } else {
+        piece.velocity.y = 0;
+      }
+      piece.velocity.x = moveToward(piece.velocity.x, 0, DAMAGE_FRICTION * dt);
+      piece.velocity.z = moveToward(piece.velocity.z, 0, DAMAGE_FRICTION * dt);
+      piece.angularVelocity.multiplyScalar(Math.max(0, 1 - dt * 2.4));
+    }
+
+    piece.life -= dt;
+    if (piece.life <= 0) {
+      city.remove(piece.mesh);
+      piece.mesh.geometry.dispose();
+      piece.mesh.material.dispose();
+      damagePieces.splice(i, 1);
+    }
   }
 }
 
@@ -997,13 +1104,14 @@ function setBrakeLights(lamps, active) {
 
 function updateCamera(dt) {
   const car = state.player;
-  const forward = getForward(car);
-  const target = car.position
+  const forward = getWorldForward(car);
+  const carPosition = car.getWorldPosition(new THREE.Vector3());
+  const target = carPosition
     .clone()
     .addScaledVector(forward, -15)
     .add(new THREE.Vector3(0, 11, 0));
   camera.position.lerp(target, 1 - Math.pow(0.001, dt));
-  const look = car.position.clone().addScaledVector(forward, 8).add(new THREE.Vector3(0, 2.2, 0));
+  const look = carPosition.clone().addScaledVector(forward, 8).add(new THREE.Vector3(0, 2.2, 0));
   camera.lookAt(look);
 }
 
@@ -1056,6 +1164,39 @@ function onKeyUp(event) {
   if (!key) return;
   keys.delete(key);
   state.toggleHeld.delete(key);
+}
+
+function onPointerDown(event) {
+  if (!state.playerCrashed) return;
+  state.worldDrag.active = true;
+  state.worldDrag.lastX = event.clientX;
+  state.worldDrag.spinVelocity = 0;
+  renderer.domElement.setPointerCapture?.(event.pointerId);
+  event.preventDefault();
+}
+
+function onPointerMove(event) {
+  if (!state.worldDrag.active) return;
+  const dx = event.clientX - state.worldDrag.lastX;
+  state.worldDrag.lastX = event.clientX;
+  const spin = dx * 0.012;
+  city.rotation.y += spin;
+  state.worldDrag.spinVelocity = dx * 0.72;
+  event.preventDefault();
+}
+
+function onPointerUp() {
+  state.worldDrag.active = false;
+}
+
+function updateWorldDrag(dt) {
+  if (!state.playerCrashed || state.worldDrag.active) return;
+  if (Math.abs(state.worldDrag.spinVelocity) < 0.01) {
+    state.worldDrag.spinVelocity = 0;
+    return;
+  }
+  city.rotation.y += state.worldDrag.spinVelocity * dt;
+  state.worldDrag.spinVelocity = moveToward(state.worldDrag.spinVelocity, 0, dt * 1.35);
 }
 
 function normalizeKey(event) {
@@ -1193,13 +1334,22 @@ function playHonkSound(kind = "short") {
 
 function restartCity() {
   for (const car of cars) city.remove(car);
+  for (const piece of damagePieces) {
+    city.remove(piece.mesh);
+    piece.mesh.geometry.dispose();
+    piece.mesh.material.dispose();
+  }
   cars.length = 0;
   collidableCars.length = 0;
+  damagePieces.length = 0;
   state.crashed = false;
   state.playerCrashed = false;
   state.signal = "off";
   state.hazard = false;
   state.greenBlockTimer = 0;
+  state.worldDrag.active = false;
+  state.worldDrag.spinVelocity = 0;
+  city.rotation.y = 0;
   restartBtn.hidden = true;
   createPlayer();
   createBots();
@@ -1260,6 +1410,10 @@ function wrapBot(bot) {
 
 function getForward(car) {
   return new THREE.Vector3(Math.sin(car.rotation.y), 0, Math.cos(car.rotation.y));
+}
+
+function getWorldForward(car) {
+  return getForward(car).applyQuaternion(city.quaternion).normalize();
 }
 
 function carVelocity(car) {
