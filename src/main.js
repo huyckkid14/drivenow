@@ -70,7 +70,11 @@ const state = {
   worldDrag: {
     active: false,
     lastX: 0,
-    spinVelocity: 0,
+    lastY: 0,
+    yaw: 0,
+    pitch: 0.46,
+    yawVelocity: 0,
+    pitchVelocity: 0,
   },
   toggleHeld: new Set(),
 };
@@ -456,6 +460,9 @@ function makeCar(color, isPlayer) {
 
   car.userData.indicators = indicators;
   car.userData.brakeLights = brakeLights;
+  car.userData.body = body;
+  car.userData.cabin = cabin;
+  car.userData.wheels = car.children.filter((child) => child.geometry?.type === "CylinderGeometry");
   return car;
 }
 
@@ -913,6 +920,7 @@ function spawnCollisionDamage(car, hitNormal, impactVelocity, closingSpeed) {
   const sideSign = sideHit ? Math.sign(localHit.x || 1) : Math.sign(localHit.z || 1);
   const count = THREE.MathUtils.clamp(Math.ceil(closingSpeed / 4), 3, 7);
   const color = data.bodyColor || 0x777777;
+  deformCarBody(car, localHit, sideHit, sideSign, closingSpeed);
 
   for (let i = 0; i < count; i++) {
     const wide = 0.38 + Math.random() * 0.62;
@@ -955,6 +963,37 @@ function spawnCollisionDamage(car, hitNormal, impactVelocity, closingSpeed) {
       life: 8,
       bounced: false,
     });
+  }
+}
+
+function deformCarBody(car, localHit, sideHit, sideSign, closingSpeed) {
+  const data = car.userData;
+  const crush = THREE.MathUtils.clamp(0.12 + closingSpeed * 0.018, 0.16, 0.34);
+  const body = data.body;
+  const cabin = data.cabin;
+  if (!body || !cabin) return;
+
+  body.scale.x = Math.max(0.72, body.scale.x - (sideHit ? crush : crush * 0.35));
+  body.scale.z = Math.max(0.7, body.scale.z - (sideHit ? crush * 0.22 : crush));
+  body.scale.y = Math.max(0.68, body.scale.y - crush * 0.28);
+  body.position.x -= sideHit ? sideSign * crush * 0.42 : localHit.x * crush * 0.18;
+  body.position.z -= sideHit ? localHit.z * crush * 0.14 : sideSign * crush * 0.38;
+  body.rotation.z += sideHit ? -sideSign * crush * 0.28 : 0;
+  body.rotation.x += sideHit ? 0 : sideSign * crush * 0.22;
+  body.material.color.lerp(new THREE.Color(0x3b3834), 0.22);
+  body.material.roughness = 0.9;
+
+  cabin.scale.x = Math.max(0.78, cabin.scale.x - (sideHit ? crush * 0.24 : crush * 0.12));
+  cabin.scale.z = Math.max(0.76, cabin.scale.z - (sideHit ? crush * 0.1 : crush * 0.22));
+  cabin.rotation.z += sideHit ? -sideSign * crush * 0.22 : 0;
+  cabin.position.y = Math.max(1.08, cabin.position.y - crush * 0.12);
+
+  const damagedSide = sideHit ? sideSign : Math.sign(localHit.x || 1);
+  for (const wheel of data.wheels || []) {
+    if (Math.sign(wheel.position.x || damagedSide) !== damagedSide) continue;
+    wheel.rotation.y += THREE.MathUtils.randFloatSpread(0.45);
+    wheel.position.x *= 0.92;
+    wheel.position.y = Math.max(0.22, wheel.position.y - crush * 0.18);
   }
 }
 
@@ -1104,6 +1143,21 @@ function setBrakeLights(lamps, active) {
 
 function updateCamera(dt) {
   const car = state.player;
+  if (state.playerCrashed) {
+    const center = car.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 1.6, 0));
+    const drag = state.worldDrag;
+    const radius = 20;
+    const pitch = THREE.MathUtils.clamp(drag.pitch, 0.15, 1.15);
+    const orbit = new THREE.Vector3(
+      Math.sin(drag.yaw) * Math.cos(pitch) * radius,
+      Math.sin(pitch) * radius + 2,
+      Math.cos(drag.yaw) * Math.cos(pitch) * radius,
+    );
+    camera.position.lerp(center.clone().add(orbit), 1 - Math.pow(0.0001, dt));
+    camera.lookAt(center);
+    return;
+  }
+
   const forward = getWorldForward(car);
   const carPosition = car.getWorldPosition(new THREE.Vector3());
   const target = carPosition
@@ -1170,7 +1224,9 @@ function onPointerDown(event) {
   if (!state.playerCrashed) return;
   state.worldDrag.active = true;
   state.worldDrag.lastX = event.clientX;
-  state.worldDrag.spinVelocity = 0;
+  state.worldDrag.lastY = event.clientY;
+  state.worldDrag.yawVelocity = 0;
+  state.worldDrag.pitchVelocity = 0;
   renderer.domElement.setPointerCapture?.(event.pointerId);
   event.preventDefault();
 }
@@ -1178,10 +1234,13 @@ function onPointerDown(event) {
 function onPointerMove(event) {
   if (!state.worldDrag.active) return;
   const dx = event.clientX - state.worldDrag.lastX;
+  const dy = event.clientY - state.worldDrag.lastY;
   state.worldDrag.lastX = event.clientX;
-  const spin = dx * 0.012;
-  city.rotation.y += spin;
-  state.worldDrag.spinVelocity = dx * 0.72;
+  state.worldDrag.lastY = event.clientY;
+  state.worldDrag.yaw -= dx * 0.012;
+  state.worldDrag.pitch = THREE.MathUtils.clamp(state.worldDrag.pitch + dy * 0.008, 0.15, 1.15);
+  state.worldDrag.yawVelocity = -dx * 0.72;
+  state.worldDrag.pitchVelocity = dy * 0.48;
   event.preventDefault();
 }
 
@@ -1191,12 +1250,11 @@ function onPointerUp() {
 
 function updateWorldDrag(dt) {
   if (!state.playerCrashed || state.worldDrag.active) return;
-  if (Math.abs(state.worldDrag.spinVelocity) < 0.01) {
-    state.worldDrag.spinVelocity = 0;
-    return;
-  }
-  city.rotation.y += state.worldDrag.spinVelocity * dt;
-  state.worldDrag.spinVelocity = moveToward(state.worldDrag.spinVelocity, 0, dt * 1.35);
+  const drag = state.worldDrag;
+  drag.yaw += drag.yawVelocity * dt;
+  drag.pitch = THREE.MathUtils.clamp(drag.pitch + drag.pitchVelocity * dt, 0.15, 1.15);
+  drag.yawVelocity = moveToward(drag.yawVelocity, 0, dt * 1.35);
+  drag.pitchVelocity = moveToward(drag.pitchVelocity, 0, dt * 1.35);
 }
 
 function normalizeKey(event) {
@@ -1348,7 +1406,10 @@ function restartCity() {
   state.hazard = false;
   state.greenBlockTimer = 0;
   state.worldDrag.active = false;
-  state.worldDrag.spinVelocity = 0;
+  state.worldDrag.yaw = 0;
+  state.worldDrag.pitch = 0.46;
+  state.worldDrag.yawVelocity = 0;
+  state.worldDrag.pitchVelocity = 0;
   city.rotation.y = 0;
   restartBtn.hidden = true;
   createPlayer();
