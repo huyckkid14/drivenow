@@ -45,6 +45,7 @@ const STOP_LINE_OFFSET = ROAD_HALF + 0.75;
 const SIGNAL_GREEN_TIME = 4.5;
 const SIGNAL_YELLOW_TIME = 1.25;
 const SIGNAL_ALL_RED_TIME = 2;
+const HONK_COOLDOWN = 1.2;
 const COLLISION_BROAD_PHASE = 5.3;
 const BUILDING_BOUNCE = 0.18;
 const CRASH_FRICTION = 4.8;
@@ -59,6 +60,8 @@ const state = {
   time: 0,
   audio: null,
   lastCrashSound: -10,
+  lastHonkSound: -10,
+  greenBlockTimer: 0,
   toggleHeld: new Set(),
 };
 
@@ -322,10 +325,11 @@ function createBots() {
       velocity: new THREE.Vector3(),
       angularVelocity: 0,
       crashed: false,
-      crashTimer: 0,
-      indicators: bot.userData.indicators,
-      brakeLights: bot.userData.brakeLights,
-    };
+    crashTimer: 0,
+    lastHonk: -10,
+    indicators: bot.userData.indicators,
+    brakeLights: bot.userData.brakeLights,
+  };
     city.add(bot);
     cars.push(bot);
     collidableCars.push(bot);
@@ -460,6 +464,7 @@ function animate() {
   updateCrashPhysics(dt);
   updatePlayer(dt);
   updateBots(dt);
+  updateDriverReactions(dt);
   updateCollisions(dt);
   updateSignals(dt);
   updateCamera(dt);
@@ -657,6 +662,104 @@ function findCarAhead(car, distance) {
     if (side < 6.1) return other;
   }
   return null;
+}
+
+function updateDriverReactions(dt) {
+  const player = state.player;
+  const data = player.userData;
+  if (data.immobilized || data.crashed || state.playerCrashed) return;
+
+  const signal = playerSignalInfo();
+  const botBehind = findBotBehindPlayer(19);
+  const blockingGreen = signal && signal.light.state === "green" && Math.abs(data.speed) < 0.6 && botBehind;
+  state.greenBlockTimer = blockingGreen ? state.greenBlockTimer + dt : 0;
+  if (state.greenBlockTimer > 1.1) {
+    requestHonk(botBehind, "short");
+  }
+
+  if (signal && signal.light.state !== "green" && signal.along < -CAR_HALF_LENGTH * 0.45) {
+    requestNearbyHonk("angry", 24);
+  }
+
+  for (const bot of cars) {
+    const botData = bot.userData;
+    if (botData.player || botData.immobilized || botData.crashed) continue;
+    const forward = dirs[botData.dir];
+    const delta = player.position.clone().sub(bot.position);
+    const ahead = delta.dot(forward);
+    if (ahead <= 0.8 || ahead > 9.5) continue;
+    const sideSq = delta.lengthSq() - ahead * ahead;
+    if (sideSq > 7.8) continue;
+    const playerForward = getForward(player);
+    const crossing = Math.abs(playerForward.dot(forward)) < 0.72;
+    const abruptBlock = botData.speed > Math.max(4, Math.abs(data.speed) + 4);
+    if (crossing || abruptBlock) requestHonk(bot, "angry");
+  }
+}
+
+function playerSignalInfo() {
+  const player = state.player;
+  const forward = getForward(player).normalize();
+  const dir = directionFromForward(forward);
+  const axis = dir === "east" || dir === "west" ? "ew" : "ns";
+  const ix = nearestGrid(player.position.x);
+  const iz = nearestGrid(player.position.z);
+  const stopCenter = stopCenterForDirection(ix, iz, dir);
+  const toStop = stopCenter.clone().sub(player.position);
+  const along = toStop.dot(dirs[dir]);
+  if (along > STOP_DISTANCE || along < -ROAD_HALF - CAR_HALF_LENGTH) return null;
+  const laneAligned = axis === "ew" ? Math.abs(player.position.z - iz) < ROAD_HALF : Math.abs(player.position.x - ix) < ROAD_HALF;
+  if (!laneAligned) return null;
+  const light = trafficLights.find((item) => item.x === ix && item.z === iz && item.axis === axis);
+  return light ? { light, dir, along } : null;
+}
+
+function findBotBehindPlayer(distance) {
+  const player = state.player;
+  const playerForward = getForward(player).normalize();
+  let closest = null;
+  let closestBehind = Infinity;
+
+  for (const bot of cars) {
+    const data = bot.userData;
+    if (data.player || data.immobilized || data.crashed) continue;
+    const botForward = dirs[data.dir];
+    if (botForward.dot(playerForward) < 0.78) continue;
+    const delta = player.position.clone().sub(bot.position);
+    const behind = delta.dot(botForward);
+    if (behind <= CAR_HALF_LENGTH || behind > distance) continue;
+    const sideSq = delta.lengthSq() - behind * behind;
+    if (sideSq > 7.2) continue;
+    if (behind < closestBehind) {
+      closest = bot;
+      closestBehind = behind;
+    }
+  }
+
+  return closest;
+}
+
+function requestNearbyHonk(kind, distance) {
+  const player = state.player;
+  let closest = null;
+  let closestDistance = Infinity;
+  for (const car of cars) {
+    if (car.userData.player || car.userData.immobilized || car.userData.crashed) continue;
+    const distanceToPlayer = car.position.distanceTo(player.position);
+    if (distanceToPlayer > distance || distanceToPlayer >= closestDistance) continue;
+    closest = car;
+    closestDistance = distanceToPlayer;
+  }
+  if (closest) requestHonk(closest, kind);
+}
+
+function requestHonk(car, kind = "short") {
+  const data = car.userData;
+  if (state.time - data.lastHonk < HONK_COOLDOWN) return;
+  if (state.time - state.lastHonkSound < 0.34) return;
+  data.lastHonk = state.time;
+  state.lastHonkSound = state.time;
+  playHonkSound(kind);
 }
 
 function updateCollisions(dt) {
@@ -958,6 +1061,43 @@ function playCrashSound(force = 0.7) {
   thud.stop(now + 0.25);
 }
 
+function playHonkSound(kind = "short") {
+  const audio = ensureAudio();
+  if (!audio) return;
+  if (audio.state === "suspended") audio.resume();
+
+  const angry = kind === "angry";
+  const now = audio.currentTime;
+  const duration = angry ? 0.34 : 0.18;
+  const gain = audio.createGain();
+  const filter = audio.createBiquadFilter();
+  const horn = audio.createOscillator();
+  const body = audio.createOscillator();
+
+  filter.type = "bandpass";
+  filter.frequency.setValueAtTime(520, now);
+  filter.Q.setValueAtTime(2.4, now);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(angry ? 0.2 : 0.14, now + 0.025);
+  gain.gain.setValueAtTime(angry ? 0.2 : 0.14, now + duration * 0.62);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+  horn.type = "square";
+  body.type = "sawtooth";
+  horn.frequency.setValueAtTime(angry ? 466 : 392, now);
+  body.frequency.setValueAtTime(angry ? 349 : 294, now);
+  if (angry) horn.frequency.setValueAtTime(440, now + 0.15);
+
+  horn.connect(filter);
+  body.connect(filter);
+  filter.connect(gain);
+  gain.connect(audio.destination);
+  horn.start(now);
+  body.start(now);
+  horn.stop(now + duration);
+  body.stop(now + duration);
+}
+
 function restartCity() {
   for (const car of cars) city.remove(car);
   cars.length = 0;
@@ -966,6 +1106,7 @@ function restartCity() {
   state.playerCrashed = false;
   state.signal = "off";
   state.hazard = false;
+  state.greenBlockTimer = 0;
   restartBtn.hidden = true;
   createPlayer();
   createBots();
@@ -1037,6 +1178,19 @@ function carVelocity(car) {
 
 function yawForDir(dir) {
   return { east: Math.PI / 2, west: -Math.PI / 2, north: Math.PI, south: 0 }[dir];
+}
+
+function directionFromForward(forward) {
+  let best = "south";
+  let bestDot = -Infinity;
+  for (const [dir, vector] of Object.entries(dirs)) {
+    const dot = forward.dot(vector);
+    if (dot > bestDot) {
+      best = dir;
+      bestDot = dot;
+    }
+  }
+  return best;
 }
 
 function nearestGrid(value) {
