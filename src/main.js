@@ -46,6 +46,8 @@ const SIGNAL_GREEN_TIME = 4.5;
 const SIGNAL_YELLOW_TIME = 1.25;
 const SIGNAL_ALL_RED_TIME = 2;
 const HONK_COOLDOWN = 1.2;
+const ANGRY_HONK_COOLDOWN = 0.62;
+const DANGER_HONK_COOLDOWN = 0.28;
 const COLLISION_BROAD_PHASE = 5.3;
 const BUILDING_BOUNCE = 0.18;
 const CRASH_FRICTION = 4.8;
@@ -681,6 +683,11 @@ function updateDriverReactions(dt) {
     requestNearbyHonk("angry", 24);
   }
 
+  const reversingTarget = findBotInReversePath(8.5);
+  if (reversingTarget) {
+    requestHonk(reversingTarget, "danger");
+  }
+
   for (const bot of cars) {
     const botData = bot.userData;
     if (botData.player || botData.immobilized || botData.crashed) continue;
@@ -739,6 +746,31 @@ function findBotBehindPlayer(distance) {
   return closest;
 }
 
+function findBotInReversePath(distance) {
+  const player = state.player;
+  const data = player.userData;
+  if (data.speed > -0.35) return null;
+
+  const reverse = getForward(player).multiplyScalar(-1).normalize();
+  let closest = null;
+  let closestAhead = Infinity;
+
+  for (const bot of cars) {
+    if (bot.userData.player || bot.userData.immobilized || bot.userData.crashed) continue;
+    const delta = bot.position.clone().sub(player.position);
+    const ahead = delta.dot(reverse);
+    if (ahead <= CAR_HALF_LENGTH || ahead > distance) continue;
+    const sideSq = delta.lengthSq() - ahead * ahead;
+    if (sideSq > 8.2) continue;
+    if (ahead < closestAhead) {
+      closest = bot;
+      closestAhead = ahead;
+    }
+  }
+
+  return closest;
+}
+
 function requestNearbyHonk(kind, distance) {
   const player = state.player;
   let closest = null;
@@ -755,8 +787,10 @@ function requestNearbyHonk(kind, distance) {
 
 function requestHonk(car, kind = "short") {
   const data = car.userData;
-  if (state.time - data.lastHonk < HONK_COOLDOWN) return;
-  if (state.time - state.lastHonkSound < 0.34) return;
+  const cooldown = kind === "danger" ? DANGER_HONK_COOLDOWN : kind === "angry" ? ANGRY_HONK_COOLDOWN : HONK_COOLDOWN;
+  const globalCooldown = kind === "danger" ? 0.13 : kind === "angry" ? 0.24 : 0.34;
+  if (state.time - data.lastHonk < cooldown) return;
+  if (state.time - state.lastHonkSound < globalCooldown) return;
   data.lastHonk = state.time;
   state.lastHonkSound = state.time;
   playHonkSound(kind);
@@ -1066,36 +1100,54 @@ function playHonkSound(kind = "short") {
   if (!audio) return;
   if (audio.state === "suspended") audio.resume();
 
-  const angry = kind === "angry";
+  const angry = kind === "angry" || kind === "danger";
+  const danger = kind === "danger";
   const now = audio.currentTime;
-  const duration = angry ? 0.34 : 0.18;
-  const gain = audio.createGain();
-  const filter = audio.createBiquadFilter();
-  const horn = audio.createOscillator();
-  const body = audio.createOscillator();
+  const bursts = danger ? 3 : 1;
+  const burstGap = 0.16;
+  const duration = danger ? 0.11 : angry ? 0.42 : 0.22;
+  const baseGain = danger ? 0.18 : angry ? 0.22 : 0.15;
 
-  filter.type = "bandpass";
-  filter.frequency.setValueAtTime(520, now);
-  filter.Q.setValueAtTime(2.4, now);
-  gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.exponentialRampToValueAtTime(angry ? 0.2 : 0.14, now + 0.025);
-  gain.gain.setValueAtTime(angry ? 0.2 : 0.14, now + duration * 0.62);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+  for (let i = 0; i < bursts; i++) {
+    const start = now + i * burstGap;
+    const end = start + duration;
+    const gain = audio.createGain();
+    const filter = audio.createBiquadFilter();
+    const lowHorn = audio.createOscillator();
+    const highHorn = audio.createOscillator();
+    const growl = audio.createOscillator();
 
-  horn.type = "square";
-  body.type = "sawtooth";
-  horn.frequency.setValueAtTime(angry ? 466 : 392, now);
-  body.frequency.setValueAtTime(angry ? 349 : 294, now);
-  if (angry) horn.frequency.setValueAtTime(440, now + 0.15);
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(620, start);
+    filter.Q.setValueAtTime(1.15, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(baseGain, start + 0.018);
+    gain.gain.setValueAtTime(baseGain, start + duration * 0.72);
+    gain.gain.exponentialRampToValueAtTime(0.0001, end);
 
-  horn.connect(filter);
-  body.connect(filter);
-  filter.connect(gain);
-  gain.connect(audio.destination);
-  horn.start(now);
-  body.start(now);
-  horn.stop(now + duration);
-  body.stop(now + duration);
+    lowHorn.type = "sawtooth";
+    highHorn.type = "sawtooth";
+    growl.type = "triangle";
+    lowHorn.frequency.setValueAtTime(349.23, start);
+    highHorn.frequency.setValueAtTime(440, start);
+    growl.frequency.setValueAtTime(174.61, start);
+    if (angry) {
+      lowHorn.frequency.linearRampToValueAtTime(329.63, end);
+      highHorn.frequency.linearRampToValueAtTime(415.3, end);
+    }
+
+    lowHorn.connect(filter);
+    highHorn.connect(filter);
+    growl.connect(filter);
+    filter.connect(gain);
+    gain.connect(audio.destination);
+    lowHorn.start(start);
+    highHorn.start(start);
+    growl.start(start);
+    lowHorn.stop(end);
+    highHorn.stop(end);
+    growl.stop(end);
+  }
 }
 
 function restartCity() {
