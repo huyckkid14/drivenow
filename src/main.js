@@ -40,12 +40,16 @@ const BOUNDS = 68;
 const CAR_RADIUS = 2.35;
 const CAR_HALF_WIDTH = 1.23;
 const CAR_HALF_LENGTH = 2.12;
-const STOP_DISTANCE = 11.5;
+const STOP_DISTANCE = 13.5;
+const STOP_LINE_OFFSET = ROAD_HALF + 0.75;
+const SIGNAL_GREEN_TIME = 4.5;
+const SIGNAL_YELLOW_TIME = 1.25;
+const SIGNAL_ALL_RED_TIME = 2;
 const COLLISION_BROAD_PHASE = 5.3;
 const BUILDING_BOUNCE = 0.18;
 const CRASH_FRICTION = 4.8;
 const CRASH_SPIN_FRICTION = 3.6;
-const TRAFFIC_CYCLE = 10;
+const TRAFFIC_CYCLE = (SIGNAL_GREEN_TIME + SIGNAL_YELLOW_TIME + SIGNAL_ALL_RED_TIME) * 2;
 
 const state = {
   crashed: false,
@@ -465,12 +469,18 @@ function animate() {
 
 function updateTrafficLights() {
   const phase = state.time % TRAFFIC_CYCLE;
-  const ewGreen = phase < 4.5;
-  const yellow = phase >= 4.5 && phase < 5.5;
+  const ewYellowStart = SIGNAL_GREEN_TIME;
+  const ewAllRedStart = ewYellowStart + SIGNAL_YELLOW_TIME;
+  const nsGreenStart = ewAllRedStart + SIGNAL_ALL_RED_TIME;
+  const nsYellowStart = nsGreenStart + SIGNAL_GREEN_TIME;
+  const nsAllRedStart = nsYellowStart + SIGNAL_YELLOW_TIME;
+
   for (const light of trafficLights) {
-    const green = light.axis === "ew" ? ewGreen : !ewGreen && phase >= 5.5;
-    const caution = light.axis === "ew" ? yellow : phase >= 9 && phase < 10;
-    light.state = green ? "green" : caution ? "yellow" : "red";
+    if (light.axis === "ew") {
+      light.state = phase < ewYellowStart ? "green" : phase < ewAllRedStart ? "yellow" : "red";
+    } else {
+      light.state = phase >= nsGreenStart && phase < nsYellowStart ? "green" : phase >= nsYellowStart && phase < nsAllRedStart ? "yellow" : "red";
+    }
     light.red.material.emissiveIntensity = light.state === "red" ? 1.8 : 0.08;
     light.yellow.material.emissiveIntensity = light.state === "yellow" ? 1.7 : 0.08;
     light.green.material.emissiveIntensity = light.state === "green" ? 1.6 : 0.08;
@@ -521,17 +531,20 @@ function updateBots(dt) {
     if (data.player || data.immobilized || data.crashed) continue;
 
     const frontBlocked = findCarAhead(bot, 14);
-    const redBlocked = mustStopForSignal(bot);
+    const signalStop = stopInfoForSignal(bot);
+    const redBlocked = Boolean(signalStop);
     const targetSpeed = frontBlocked || redBlocked ? 0 : data.desiredSpeed;
-    const rate = targetSpeed < data.speed ? 22 : 7;
+    const rate = targetSpeed < data.speed ? (redBlocked ? 34 : 22) : 7;
     data.braking = targetSpeed < data.speed - 0.5;
     data.speed = moveToward(data.speed, targetSpeed, rate * dt);
 
     maybeTurnAtIntersection(bot);
     const forward = dirs[data.dir];
+    const previous = bot.position.clone();
     bot.rotation.y = lerpAngle(bot.rotation.y, yawForDir(data.dir), dt * 7);
     data.velocity.copy(forward).multiplyScalar(data.speed);
     bot.position.addScaledVector(data.velocity, dt);
+    if (signalStop) alignWithStopLine(bot, signalStop, dt, previous, !frontBlocked);
     wrapBot(bot);
   }
 }
@@ -563,19 +576,74 @@ function snapToLane(bot) {
   if (data.dir === "south") bot.position.x = nearestGrid(bot.position.x) + LANES[1];
 }
 
-function mustStopForSignal(bot) {
+function stopInfoForSignal(bot) {
   const data = bot.userData;
   const forward = dirs[data.dir];
   const axis = data.dir === "east" || data.dir === "west" ? "ew" : "ns";
   const ix = nearestGrid(bot.position.x);
   const iz = nearestGrid(bot.position.z);
-  const toStop = new THREE.Vector3(ix - bot.position.x, 0, iz - bot.position.z);
+  const stopCenter = stopCenterForDirection(ix, iz, data.dir);
+  const toStop = stopCenter.clone().sub(bot.position);
   const ahead = toStop.dot(forward);
-  if (ahead < 1.8 || ahead > STOP_DISTANCE) return false;
+  if (ahead > STOP_DISTANCE || ahead < -CAR_HALF_LENGTH - 0.9) return null;
   const laneAligned = axis === "ew" ? Math.abs(bot.position.z - iz) < ROAD_HALF : Math.abs(bot.position.x - ix) < ROAD_HALF;
-  if (!laneAligned) return false;
+  if (!laneAligned) return null;
   const light = trafficLights.find((item) => item.x === ix && item.z === iz && item.axis === axis);
-  return light && light.state !== "green";
+  if (!light || light.state === "green") return null;
+  return { stopCenter, forward, ahead };
+}
+
+function stopCenterForDirection(ix, iz, dir) {
+  if (dir === "east") return new THREE.Vector3(ix - STOP_LINE_OFFSET - CAR_HALF_LENGTH, 0, iz + LANES[1]);
+  if (dir === "west") return new THREE.Vector3(ix + STOP_LINE_OFFSET + CAR_HALF_LENGTH, 0, iz + LANES[0]);
+  if (dir === "north") return new THREE.Vector3(ix + LANES[0], 0, iz + STOP_LINE_OFFSET + CAR_HALF_LENGTH);
+  return new THREE.Vector3(ix + LANES[1], 0, iz - STOP_LINE_OFFSET - CAR_HALF_LENGTH);
+}
+
+function alignWithStopLine(bot, stop, dt, previous, canCreep) {
+  const data = bot.userData;
+  const offset = stop.stopCenter.clone().sub(bot.position);
+  const along = offset.dot(stop.forward);
+  const side = offset.clone().addScaledVector(stop.forward, -along);
+  const previousAlong = stop.stopCenter.clone().sub(previous).dot(stop.forward);
+
+  if (side.lengthSq() > 0.0001) bot.position.addScaledVector(side, Math.min(1, dt * 4.5));
+  if (Math.abs(along) < 0.06 || (previousAlong >= 0 && along <= 0)) {
+    bot.position.copy(stop.stopCenter);
+    data.speed = 0;
+    data.velocity.set(0, 0, 0);
+    data.braking = true;
+    return;
+  }
+
+  if (along > 0) {
+    if (canCreep && Math.abs(data.speed) < 0.2) {
+      bot.position.addScaledVector(stop.forward, Math.min(along, 1.8 * dt));
+    }
+    return;
+  }
+
+  if (canBackUpToStopLine(bot, stop)) {
+    const reverseStep = Math.min(-along, 2.4 * dt);
+    bot.position.addScaledVector(stop.forward, -reverseStep);
+    data.speed = 0;
+    data.velocity.set(0, 0, 0);
+    data.braking = true;
+  }
+}
+
+function canBackUpToStopLine(bot, stop) {
+  const needed = stop.stopCenter.distanceTo(bot.position);
+  if (needed > 2.5) return false;
+  for (const other of collidableCars) {
+    if (other === bot || other.userData.immobilized) continue;
+    const delta = other.position.clone().sub(bot.position);
+    const behind = -delta.dot(stop.forward);
+    if (behind <= 0 || behind > needed + CAR_HALF_LENGTH * 2.4) continue;
+    const side = delta.lengthSq() - behind * behind;
+    if (side < 7.5) return false;
+  }
+  return true;
 }
 
 function findCarAhead(car, distance) {
