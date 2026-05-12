@@ -968,7 +968,7 @@ function spawnCollisionDamage(car, hitNormal, impactVelocity, closingSpeed) {
 
 function deformCarBody(car, localHit, sideHit, sideSign, closingSpeed) {
   const data = car.userData;
-  const crush = THREE.MathUtils.clamp(0.12 + closingSpeed * 0.018, 0.16, 0.34);
+  const crush = THREE.MathUtils.clamp(0.2 + closingSpeed * 0.026, 0.28, 0.58);
   const body = data.body;
   const cabin = data.cabin;
   if (!body || !cabin) return;
@@ -994,6 +994,80 @@ function deformCarBody(car, localHit, sideHit, sideSign, closingSpeed) {
     wheel.rotation.y += THREE.MathUtils.randFloatSpread(0.45);
     wheel.position.x *= 0.92;
     wheel.position.y = Math.max(0.22, wheel.position.y - crush * 0.18);
+  }
+
+  addDentPatch(car, localHit, sideHit, sideSign, crush);
+  addTornPanels(car, localHit, sideHit, sideSign, crush);
+}
+
+function addDentPatch(car, localHit, sideHit, sideSign, crush) {
+  const dentMat = new THREE.MeshStandardMaterial({
+    color: 0x101214,
+    roughness: 0.96,
+    metalness: 0.25,
+  });
+  const scrapeMat = new THREE.MeshStandardMaterial({
+    color: 0xb8b1a4,
+    roughness: 0.84,
+    metalness: 0.42,
+  });
+  const dent = new THREE.Mesh(
+    new THREE.BoxGeometry(sideHit ? 0.08 : 1.35, 0.56, sideHit ? 1.35 : 0.08),
+    dentMat,
+  );
+  const scrape = new THREE.Mesh(
+    new THREE.BoxGeometry(sideHit ? 0.095 : 1.0, 0.08, sideHit ? 1.0 : 0.095),
+    scrapeMat,
+  );
+  const z = THREE.MathUtils.clamp(localHit.z * CAR_HALF_LENGTH, -1.45, 1.45);
+  const x = THREE.MathUtils.clamp(localHit.x * CAR_HALF_WIDTH, -0.78, 0.78);
+  const dentLocal = sideHit
+    ? new THREE.Vector3(sideSign * (CAR_HALF_WIDTH + 0.045), 0.75, z)
+    : new THREE.Vector3(x, 0.75, sideSign * (CAR_HALF_LENGTH + 0.045));
+  dent.position.copy(dentLocal);
+  scrape.position.copy(dentLocal).add(new THREE.Vector3(sideHit ? sideSign * 0.012 : 0, 0.34, sideHit ? 0 : sideSign * 0.012));
+  dent.rotation.y = sideHit ? 0 : Math.PI / 2;
+  scrape.rotation.y = dent.rotation.y;
+  dent.scale.setScalar(1 + crush * 0.45);
+  scrape.scale.setScalar(1 + crush * 0.25);
+  car.add(dent, scrape);
+
+  const inward = sideHit ? new THREE.Vector3(-sideSign * crush * 0.45, -crush * 0.08, 0) : new THREE.Vector3(0, -crush * 0.08, -sideSign * crush * 0.45);
+  dent.position.add(inward);
+}
+
+function addTornPanels(car, localHit, sideHit, sideSign, crush) {
+  const color = car.userData.bodyColor || 0x777777;
+  const edgeMat = new THREE.MeshStandardMaterial({
+    color,
+    roughness: 0.86,
+    metalness: 0.22,
+  });
+  const darkMat = new THREE.MeshStandardMaterial({
+    color: 0x24211f,
+    roughness: 0.92,
+    metalness: 0.18,
+  });
+  const baseZ = THREE.MathUtils.clamp(localHit.z * CAR_HALF_LENGTH, -1.55, 1.55);
+  const baseX = THREE.MathUtils.clamp(localHit.x * CAR_HALF_WIDTH, -0.82, 0.82);
+  for (let i = 0; i < 5; i++) {
+    const shard = new THREE.Mesh(
+      new THREE.BoxGeometry(0.08 + Math.random() * 0.12, 0.1 + Math.random() * 0.16, 0.52 + Math.random() * 0.44),
+      i % 2 ? edgeMat : darkMat,
+    );
+    const offset = THREE.MathUtils.randFloatSpread(0.9);
+    shard.position.set(
+      sideHit ? sideSign * (CAR_HALF_WIDTH + 0.12 + Math.random() * 0.12) : baseX + offset * 0.6,
+      0.55 + Math.random() * 0.62,
+      sideHit ? baseZ + offset : sideSign * (CAR_HALF_LENGTH + 0.12 + Math.random() * 0.12),
+    );
+    if (!sideHit) {
+      shard.rotation.y = Math.PI / 2;
+    }
+    shard.rotation.x = THREE.MathUtils.randFloatSpread(0.45);
+    shard.rotation.z = THREE.MathUtils.randFloatSpread(0.55) + (sideHit ? sideSign * crush : 0);
+    shard.scale.x *= 1 + crush;
+    car.add(shard);
   }
 }
 
