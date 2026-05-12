@@ -67,15 +67,6 @@ const state = {
   lastCrashSound: -10,
   lastHonkSound: -10,
   greenBlockTimer: 0,
-  worldDrag: {
-    active: false,
-    lastX: 0,
-    lastY: 0,
-    yaw: 0,
-    pitch: 0.46,
-    yawVelocity: 0,
-    pitchVelocity: 0,
-  },
   toggleHeld: new Set(),
 };
 
@@ -126,10 +117,6 @@ function init() {
   window.addEventListener("keyup", onKeyUp, { capture: true });
   window.addEventListener("resize", onResize);
   renderer.domElement.tabIndex = 0;
-  renderer.domElement.addEventListener("pointerdown", onPointerDown);
-  window.addEventListener("pointermove", onPointerMove);
-  window.addEventListener("pointerup", onPointerUp);
-  window.addEventListener("pointercancel", onPointerUp);
   renderer.domElement.addEventListener("pointerdown", () => {
     renderer.domElement.focus();
     ensureAudio();
@@ -488,8 +475,8 @@ function animate() {
   state.time += dt;
   updateTrafficLights();
   updateCrashPhysics(dt);
+  updatePieceCarPushes();
   updateDamagePieces(dt);
-  updateWorldDrag(dt);
   updatePlayer(dt);
   updateBots(dt);
   updateDriverReactions(dt);
@@ -960,7 +947,6 @@ function spawnCollisionDamage(car, hitNormal, impactVelocity, closingSpeed) {
         THREE.MathUtils.randFloatSpread(5.5),
         THREE.MathUtils.randFloatSpread(4.2),
       ),
-      life: 8,
       bounced: false,
     });
   }
@@ -996,44 +982,40 @@ function deformCarBody(car, localHit, sideHit, sideSign, closingSpeed) {
     wheel.position.y = Math.max(0.22, wheel.position.y - crush * 0.18);
   }
 
-  addDentPatch(car, localHit, sideHit, sideSign, crush);
+  addBrokenCavity(car, localHit, sideHit, sideSign, crush);
   addTornPanels(car, localHit, sideHit, sideSign, crush);
 }
 
-function addDentPatch(car, localHit, sideHit, sideSign, crush) {
-  const dentMat = new THREE.MeshStandardMaterial({
-    color: 0x101214,
-    roughness: 0.96,
-    metalness: 0.25,
-  });
-  const scrapeMat = new THREE.MeshStandardMaterial({
-    color: 0xb8b1a4,
-    roughness: 0.84,
-    metalness: 0.42,
-  });
-  const dent = new THREE.Mesh(
-    new THREE.BoxGeometry(sideHit ? 0.08 : 1.35, 0.56, sideHit ? 1.35 : 0.08),
-    dentMat,
-  );
-  const scrape = new THREE.Mesh(
-    new THREE.BoxGeometry(sideHit ? 0.095 : 1.0, 0.08, sideHit ? 1.0 : 0.095),
-    scrapeMat,
-  );
+function addBrokenCavity(car, localHit, sideHit, sideSign, crush) {
+  const cavityMat = new THREE.MeshStandardMaterial({ color: 0x050607, roughness: 1, metalness: 0.12 });
+  const rawMetalMat = new THREE.MeshStandardMaterial({ color: 0xc7beb0, roughness: 0.75, metalness: 0.55 });
   const z = THREE.MathUtils.clamp(localHit.z * CAR_HALF_LENGTH, -1.45, 1.45);
   const x = THREE.MathUtils.clamp(localHit.x * CAR_HALF_WIDTH, -0.78, 0.78);
-  const dentLocal = sideHit
-    ? new THREE.Vector3(sideSign * (CAR_HALF_WIDTH + 0.045), 0.75, z)
-    : new THREE.Vector3(x, 0.75, sideSign * (CAR_HALF_LENGTH + 0.045));
-  dent.position.copy(dentLocal);
-  scrape.position.copy(dentLocal).add(new THREE.Vector3(sideHit ? sideSign * 0.012 : 0, 0.34, sideHit ? 0 : sideSign * 0.012));
-  dent.rotation.y = sideHit ? 0 : Math.PI / 2;
-  scrape.rotation.y = dent.rotation.y;
-  dent.scale.setScalar(1 + crush * 0.45);
-  scrape.scale.setScalar(1 + crush * 0.25);
-  car.add(dent, scrape);
+  const center = sideHit
+    ? new THREE.Vector3(sideSign * (CAR_HALF_WIDTH + 0.09), 0.76, z)
+    : new THREE.Vector3(x, 0.76, sideSign * (CAR_HALF_LENGTH + 0.09));
+  const cavity = new THREE.Mesh(
+    new THREE.BoxGeometry(sideHit ? 0.16 : 1.85, 0.78, sideHit ? 1.85 : 0.16),
+    cavityMat,
+  );
+  cavity.position.copy(center);
+  cavity.rotation.y = sideHit ? 0 : Math.PI / 2;
+  cavity.scale.set(1 + crush * 0.75, 1 + crush * 0.42, 1 + crush * 0.75);
+  car.add(cavity);
 
-  const inward = sideHit ? new THREE.Vector3(-sideSign * crush * 0.45, -crush * 0.08, 0) : new THREE.Vector3(0, -crush * 0.08, -sideSign * crush * 0.45);
-  dent.position.add(inward);
+  for (let i = 0; i < 4; i++) {
+    const rib = new THREE.Mesh(
+      new THREE.BoxGeometry(sideHit ? 0.2 : 1.25, 0.08, sideHit ? 1.25 : 0.2),
+      rawMetalMat,
+    );
+    rib.position.copy(center);
+    rib.position.y += -0.36 + i * 0.24;
+    if (sideHit) rib.position.x += sideSign * 0.03;
+    else rib.position.z += sideSign * 0.03;
+    rib.rotation.y = cavity.rotation.y;
+    rib.rotation.z = THREE.MathUtils.randFloatSpread(0.22);
+    car.add(rib);
+  }
 }
 
 function addTornPanels(car, localHit, sideHit, sideSign, crush) {
@@ -1092,13 +1074,29 @@ function updateDamagePieces(dt) {
       piece.velocity.z = moveToward(piece.velocity.z, 0, DAMAGE_FRICTION * dt);
       piece.angularVelocity.multiplyScalar(Math.max(0, 1 - dt * 2.4));
     }
+  }
+}
 
-    piece.life -= dt;
-    if (piece.life <= 0) {
-      city.remove(piece.mesh);
-      piece.mesh.geometry.dispose();
-      piece.mesh.material.dispose();
-      damagePieces.splice(i, 1);
+function updatePieceCarPushes() {
+  for (const piece of damagePieces) {
+    if (piece.mesh.position.y > 0.75) continue;
+    for (const car of collidableCars) {
+      const delta = piece.mesh.position.clone().sub(car.position);
+      if (Math.abs(delta.y) > 1.1) continue;
+      const forward = getForward(car);
+      const right = new THREE.Vector3(forward.z, 0, -forward.x);
+      const along = delta.dot(forward);
+      const side = delta.dot(right);
+      if (Math.abs(along) > CAR_HALF_LENGTH + 0.6 || Math.abs(side) > CAR_HALF_WIDTH + 0.45) continue;
+      const push = delta.setY(0);
+      if (push.lengthSq() < 0.001) push.copy(forward);
+      push.normalize();
+      const speed = Math.max(2.5, Math.abs(car.userData.speed || 0));
+      piece.velocity.addScaledVector(push, speed * 0.22);
+      piece.velocity.addScaledVector(forward, (car.userData.speed || 0) * 0.2);
+      piece.velocity.y = Math.max(piece.velocity.y, 0.7);
+      piece.angularVelocity.add(new THREE.Vector3(side * 0.3, speed * 0.12, -along * 0.25));
+      break;
     }
   }
 }
@@ -1217,21 +1215,6 @@ function setBrakeLights(lamps, active) {
 
 function updateCamera(dt) {
   const car = state.player;
-  if (state.playerCrashed) {
-    const center = car.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 1.6, 0));
-    const drag = state.worldDrag;
-    const radius = 20;
-    const pitch = THREE.MathUtils.clamp(drag.pitch, 0.15, 1.15);
-    const orbit = new THREE.Vector3(
-      Math.sin(drag.yaw) * Math.cos(pitch) * radius,
-      Math.sin(pitch) * radius + 2,
-      Math.cos(drag.yaw) * Math.cos(pitch) * radius,
-    );
-    camera.position.lerp(center.clone().add(orbit), 1 - Math.pow(0.0001, dt));
-    camera.lookAt(center);
-    return;
-  }
-
   const forward = getWorldForward(car);
   const carPosition = car.getWorldPosition(new THREE.Vector3());
   const target = carPosition
@@ -1292,43 +1275,6 @@ function onKeyUp(event) {
   if (!key) return;
   keys.delete(key);
   state.toggleHeld.delete(key);
-}
-
-function onPointerDown(event) {
-  if (!state.playerCrashed) return;
-  state.worldDrag.active = true;
-  state.worldDrag.lastX = event.clientX;
-  state.worldDrag.lastY = event.clientY;
-  state.worldDrag.yawVelocity = 0;
-  state.worldDrag.pitchVelocity = 0;
-  renderer.domElement.setPointerCapture?.(event.pointerId);
-  event.preventDefault();
-}
-
-function onPointerMove(event) {
-  if (!state.worldDrag.active) return;
-  const dx = event.clientX - state.worldDrag.lastX;
-  const dy = event.clientY - state.worldDrag.lastY;
-  state.worldDrag.lastX = event.clientX;
-  state.worldDrag.lastY = event.clientY;
-  state.worldDrag.yaw -= dx * 0.012;
-  state.worldDrag.pitch = THREE.MathUtils.clamp(state.worldDrag.pitch + dy * 0.008, 0.15, 1.15);
-  state.worldDrag.yawVelocity = -dx * 0.72;
-  state.worldDrag.pitchVelocity = dy * 0.48;
-  event.preventDefault();
-}
-
-function onPointerUp() {
-  state.worldDrag.active = false;
-}
-
-function updateWorldDrag(dt) {
-  if (!state.playerCrashed || state.worldDrag.active) return;
-  const drag = state.worldDrag;
-  drag.yaw += drag.yawVelocity * dt;
-  drag.pitch = THREE.MathUtils.clamp(drag.pitch + drag.pitchVelocity * dt, 0.15, 1.15);
-  drag.yawVelocity = moveToward(drag.yawVelocity, 0, dt * 1.35);
-  drag.pitchVelocity = moveToward(drag.pitchVelocity, 0, dt * 1.35);
 }
 
 function normalizeKey(event) {
@@ -1466,24 +1412,13 @@ function playHonkSound(kind = "short") {
 
 function restartCity() {
   for (const car of cars) city.remove(car);
-  for (const piece of damagePieces) {
-    city.remove(piece.mesh);
-    piece.mesh.geometry.dispose();
-    piece.mesh.material.dispose();
-  }
   cars.length = 0;
   collidableCars.length = 0;
-  damagePieces.length = 0;
   state.crashed = false;
   state.playerCrashed = false;
   state.signal = "off";
   state.hazard = false;
   state.greenBlockTimer = 0;
-  state.worldDrag.active = false;
-  state.worldDrag.yaw = 0;
-  state.worldDrag.pitch = 0.46;
-  state.worldDrag.yawVelocity = 0;
-  state.worldDrag.pitchVelocity = 0;
   city.rotation.y = 0;
   restartBtn.hidden = true;
   createPlayer();
