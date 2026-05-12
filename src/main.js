@@ -327,11 +327,12 @@ function createBots() {
       velocity: new THREE.Vector3(),
       angularVelocity: 0,
       crashed: false,
-    crashTimer: 0,
-    lastHonk: -10,
-    indicators: bot.userData.indicators,
-    brakeLights: bot.userData.brakeLights,
-  };
+      crashTimer: 0,
+      lastHonk: -10,
+      lastPlayerDistance: null,
+      indicators: bot.userData.indicators,
+      brakeLights: bot.userData.brakeLights,
+    };
     city.add(bot);
     cars.push(bot);
     collidableCars.push(bot);
@@ -693,6 +694,15 @@ function updateDriverReactions(dt) {
     if (botData.player || botData.immobilized || botData.crashed) continue;
     const forward = dirs[botData.dir];
     const delta = player.position.clone().sub(bot.position);
+    const distanceToPlayer = delta.length();
+    const previousDistance = botData.lastPlayerDistance;
+    const suddenClose =
+      previousDistance &&
+      distanceToPlayer < 8.5 &&
+      (previousDistance - distanceToPlayer > 1.6 || (previousDistance > 11 && distanceToPlayer < 6.5));
+    if (suddenClose) requestHonk(bot, "danger");
+    botData.lastPlayerDistance = distanceToPlayer;
+
     const ahead = delta.dot(forward);
     if (ahead <= 0.8 || ahead > 9.5) continue;
     const sideSq = delta.lengthSq() - ahead * ahead;
