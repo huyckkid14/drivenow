@@ -67,6 +67,13 @@ const state = {
   lastCrashSound: -10,
   lastHonkSound: -10,
   greenBlockTimer: 0,
+  crashLook: {
+    active: false,
+    lastX: 0,
+    lastY: 0,
+    yaw: 0,
+    pitch: 0,
+  },
   toggleHeld: new Set(),
 };
 
@@ -117,10 +124,10 @@ function init() {
   window.addEventListener("keyup", onKeyUp, { capture: true });
   window.addEventListener("resize", onResize);
   renderer.domElement.tabIndex = 0;
-  renderer.domElement.addEventListener("pointerdown", () => {
-    renderer.domElement.focus();
-    ensureAudio();
-  });
+  renderer.domElement.addEventListener("pointerdown", onPointerDown);
+  window.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", onPointerUp);
+  window.addEventListener("pointercancel", onPointerUp);
   renderer.domElement.focus();
   leftSignalBtn.addEventListener("click", () => toggleSignal("left"));
   rightSignalBtn.addEventListener("click", () => toggleSignal("right"));
@@ -913,8 +920,9 @@ function spawnCollisionDamage(car, hitNormal, impactVelocity, closingSpeed) {
     const wide = 0.38 + Math.random() * 0.62;
     const tall = 0.12 + Math.random() * 0.18;
     const deep = 0.32 + Math.random() * 0.55;
+    const geometry = new THREE.BoxGeometry(sideHit ? tall : wide, tall, sideHit ? wide : tall);
     const piece = new THREE.Mesh(
-      new THREE.BoxGeometry(sideHit ? tall : wide, tall, sideHit ? wide : tall),
+      geometry,
       new THREE.MeshStandardMaterial({
         color: i % 3 === 0 ? 0x1f2427 : color,
         roughness: 0.72,
@@ -947,6 +955,7 @@ function spawnCollisionDamage(car, hitNormal, impactVelocity, closingSpeed) {
         THREE.MathUtils.randFloatSpread(5.5),
         THREE.MathUtils.randFloatSpread(4.2),
       ),
+      restY: tall / 2,
       bounced: false,
     });
   }
@@ -1056,14 +1065,15 @@ function addTornPanels(car, localHit, sideHit, sideSign, crush) {
 function updateDamagePieces(dt) {
   for (let i = damagePieces.length - 1; i >= 0; i--) {
     const piece = damagePieces[i];
+    const restY = piece.restY || 0.08;
     piece.velocity.y -= DAMAGE_GRAVITY * dt;
     piece.mesh.position.addScaledVector(piece.velocity, dt);
     piece.mesh.rotation.x += piece.angularVelocity.x * dt;
     piece.mesh.rotation.y += piece.angularVelocity.y * dt;
     piece.mesh.rotation.z += piece.angularVelocity.z * dt;
 
-    if (piece.mesh.position.y < 0.18) {
-      piece.mesh.position.y = 0.18;
+    if (piece.mesh.position.y <= restY) {
+      piece.mesh.position.y = restY;
       if (!piece.bounced && Math.abs(piece.velocity.y) > 1.2) {
         piece.velocity.y = Math.abs(piece.velocity.y) * 0.34;
         piece.bounced = true;
@@ -1073,6 +1083,12 @@ function updateDamagePieces(dt) {
       piece.velocity.x = moveToward(piece.velocity.x, 0, DAMAGE_FRICTION * dt);
       piece.velocity.z = moveToward(piece.velocity.z, 0, DAMAGE_FRICTION * dt);
       piece.angularVelocity.multiplyScalar(Math.max(0, 1 - dt * 2.4));
+    }
+
+    if (piece.bounced && piece.mesh.position.y < restY + 0.35 && piece.velocity.lengthSq() < 0.18) {
+      piece.mesh.position.y = restY;
+      piece.velocity.set(0, 0, 0);
+      piece.angularVelocity.set(0, 0, 0);
     }
   }
 }
@@ -1215,12 +1231,16 @@ function setBrakeLights(lamps, active) {
 
 function updateCamera(dt) {
   const car = state.player;
-  const forward = getWorldForward(car);
+  const baseForward = getWorldForward(car);
+  const forward = state.playerCrashed
+    ? baseForward.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), state.crashLook.yaw).normalize()
+    : baseForward;
   const carPosition = car.getWorldPosition(new THREE.Vector3());
+  const vertical = state.playerCrashed ? new THREE.Vector3(0, 11 + state.crashLook.pitch, 0) : new THREE.Vector3(0, 11, 0);
   const target = carPosition
     .clone()
     .addScaledVector(forward, -15)
-    .add(new THREE.Vector3(0, 11, 0));
+    .add(vertical);
   camera.position.lerp(target, 1 - Math.pow(0.001, dt));
   const look = carPosition.clone().addScaledVector(forward, 8).add(new THREE.Vector3(0, 2.2, 0));
   camera.lookAt(look);
@@ -1275,6 +1295,32 @@ function onKeyUp(event) {
   if (!key) return;
   keys.delete(key);
   state.toggleHeld.delete(key);
+}
+
+function onPointerDown(event) {
+  renderer.domElement.focus();
+  ensureAudio();
+  if (!state.playerCrashed) return;
+  state.crashLook.active = true;
+  state.crashLook.lastX = event.clientX;
+  state.crashLook.lastY = event.clientY;
+  renderer.domElement.setPointerCapture?.(event.pointerId);
+  event.preventDefault();
+}
+
+function onPointerMove(event) {
+  if (!state.crashLook.active) return;
+  const dx = event.clientX - state.crashLook.lastX;
+  const dy = event.clientY - state.crashLook.lastY;
+  state.crashLook.lastX = event.clientX;
+  state.crashLook.lastY = event.clientY;
+  state.crashLook.yaw = THREE.MathUtils.clamp(state.crashLook.yaw - dx * 0.01, -1.45, 1.45);
+  state.crashLook.pitch = THREE.MathUtils.clamp(state.crashLook.pitch + dy * 0.08, -5, 6);
+  event.preventDefault();
+}
+
+function onPointerUp() {
+  state.crashLook.active = false;
 }
 
 function normalizeKey(event) {
@@ -1419,6 +1465,9 @@ function restartCity() {
   state.signal = "off";
   state.hazard = false;
   state.greenBlockTimer = 0;
+  state.crashLook.active = false;
+  state.crashLook.yaw = 0;
+  state.crashLook.pitch = 0;
   city.rotation.y = 0;
   restartBtn.hidden = true;
   createPlayer();
