@@ -58,7 +58,6 @@ const CRASH_FRICTION = 4.8;
 const CRASH_SPIN_FRICTION = 3.6;
 const DAMAGE_GRAVITY = 16;
 const DAMAGE_FRICTION = 2.8;
-const DAMAGE_BOUNDS = BOUNDS - 2;
 const TRAFFIC_CYCLE = (SIGNAL_GREEN_TIME + SIGNAL_YELLOW_TIME + SIGNAL_ALL_RED_TIME) * 2;
 
 const state = {
@@ -1328,7 +1327,6 @@ function updateDamagePieces(dt) {
     piece.mesh.rotation.x += piece.angularVelocity.x * dt;
     piece.mesh.rotation.y += piece.angularVelocity.y * dt;
     piece.mesh.rotation.z += piece.angularVelocity.z * dt;
-    keepDamagePieceInBounds(piece);
 
     if (piece.mesh.position.y <= restY) {
       piece.mesh.position.y = restY;
@@ -1348,28 +1346,6 @@ function updateDamagePieces(dt) {
       piece.velocity.set(0, 0, 0);
       piece.angularVelocity.set(0, 0, 0);
     }
-  }
-}
-
-function keepDamagePieceInBounds(piece) {
-  if (piece.mesh.position.x > DAMAGE_BOUNDS) {
-    piece.mesh.position.x = DAMAGE_BOUNDS;
-    piece.velocity.x = Math.min(0, -Math.abs(piece.velocity.x) * 0.45);
-    piece.velocity.z *= 0.72;
-  } else if (piece.mesh.position.x < -DAMAGE_BOUNDS) {
-    piece.mesh.position.x = -DAMAGE_BOUNDS;
-    piece.velocity.x = Math.max(0, Math.abs(piece.velocity.x) * 0.45);
-    piece.velocity.z *= 0.72;
-  }
-
-  if (piece.mesh.position.z > DAMAGE_BOUNDS) {
-    piece.mesh.position.z = DAMAGE_BOUNDS;
-    piece.velocity.z = Math.min(0, -Math.abs(piece.velocity.z) * 0.45);
-    piece.velocity.x *= 0.72;
-  } else if (piece.mesh.position.z < -DAMAGE_BOUNDS) {
-    piece.mesh.position.z = -DAMAGE_BOUNDS;
-    piece.velocity.z = Math.max(0, Math.abs(piece.velocity.z) * 0.45);
-    piece.velocity.x *= 0.72;
   }
 }
 
