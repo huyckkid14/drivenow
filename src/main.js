@@ -63,6 +63,7 @@ const state = {
   playerCrashed: false,
   signal: "off",
   hazard: false,
+  dashboardView: false,
   time: 0,
   audio: null,
   lastCrashSound: -10,
@@ -444,6 +445,7 @@ function makeCar(color, isPlayer) {
   }
 
   if (isPlayer) {
+    addDashboardInterior(car);
     const marker = new THREE.Mesh(
       new THREE.ConeGeometry(0.65, 1.15, 3),
       new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x9ee7ff, emissiveIntensity: 0.32 }),
@@ -459,6 +461,51 @@ function makeCar(color, isPlayer) {
   car.userData.cabin = cabin;
   car.userData.wheels = car.children.filter((child) => child.geometry?.type === "CylinderGeometry");
   return car;
+}
+
+function addDashboardInterior(car) {
+  const dashMat = new THREE.MeshStandardMaterial({ color: 0x171c1d, roughness: 0.72 });
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x080909, roughness: 0.58, metalness: 0.05 });
+  const screenMat = new THREE.MeshStandardMaterial({ color: 0x071115, emissive: 0x073344, emissiveIntensity: 0.45, roughness: 0.35 });
+  const activeMat = new THREE.MeshStandardMaterial({ color: 0x39e37a, emissive: 0x24d960, emissiveIntensity: 1.2, roughness: 0.4 });
+  const inactiveMat = new THREE.MeshStandardMaterial({ color: 0x243035, emissive: 0x000000, emissiveIntensity: 0, roughness: 0.5 });
+
+  const dash = new THREE.Mesh(new THREE.BoxGeometry(2.05, 0.38, 0.5), dashMat);
+  dash.position.set(0, 1.08, 1.32);
+  dash.castShadow = true;
+  car.add(dash);
+
+  const display = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.34, 0.05), screenMat);
+  display.position.set(0, 1.15, 1.59);
+  car.add(display);
+
+  const needle = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.25, 0.04), activeMat.clone());
+  needle.position.set(0, 1.17, 1.63);
+  needle.geometry.translate(0, 0.11, 0);
+  car.add(needle);
+
+  const steeringWheel = new THREE.Group();
+  steeringWheel.position.set(0, 0.95, 0.95);
+  steeringWheel.rotation.x = Math.PI / 2.8;
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.38, 0.035, 10, 36), wheelMat);
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.05, 18), wheelMat);
+  hub.rotation.x = Math.PI / 2;
+  steeringWheel.add(rim, hub);
+  for (const angle of [0, (Math.PI * 2) / 3, (Math.PI * 4) / 3]) {
+    const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.31, 0.035, 0.025), wheelMat);
+    spoke.position.set(Math.cos(angle) * 0.13, Math.sin(angle) * 0.13, 0);
+    spoke.rotation.z = angle;
+    steeringWheel.add(spoke);
+  }
+  car.add(steeringWheel);
+
+  const leftSignal = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.04), inactiveMat.clone());
+  leftSignal.position.set(0.46, 1.16, 1.63);
+  const rightSignal = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.04), inactiveMat.clone());
+  rightSignal.position.set(-0.46, 1.16, 1.63);
+  car.add(leftSignal, rightSignal);
+
+  car.userData.dashboard = { steeringWheel, needle, leftSignal, rightSignal };
 }
 
 function createSkylineDetails() {
@@ -1233,7 +1280,25 @@ function updateSignals(dt) {
     const right = useHazard || (data.player && state.signal === "right");
     setSignalLamps(data.indicators, left && on, right && on);
     setBrakeLights(data.brakeLights, data.braking || data.immobilized);
+    if (data.player) updateDashboardDisplay(data, left && on, right && on);
   }
+}
+
+function updateDashboardDisplay(data, leftActive, rightActive) {
+  const dashboard = data.dashboard;
+  if (!dashboard) return;
+  dashboard.steeringWheel.rotation.z = -data.steer * 0.95;
+  const speedRatio = THREE.MathUtils.clamp(Math.abs(data.speed) / data.maxSpeed, 0, 1);
+  dashboard.needle.rotation.z = -0.85 + speedRatio * 1.7;
+  setDashSignal(dashboard.leftSignal, leftActive);
+  setDashSignal(dashboard.rightSignal, rightActive);
+}
+
+function setDashSignal(mesh, active) {
+  mesh.material.color.set(active ? 0x48f37d : 0x243035);
+  mesh.material.emissive.set(active ? 0x2ef76f : 0x000000);
+  mesh.material.emissiveIntensity = active ? 1.4 : 0;
+  mesh.scale.setScalar(active ? 1.2 : 1);
 }
 
 function setSignalLamps(indicators, leftActive, rightActive) {
@@ -1255,6 +1320,16 @@ function setBrakeLights(lamps, active) {
 
 function updateCamera(dt) {
   const car = state.player;
+  if (state.dashboardView && !state.playerCrashed) {
+    const eye = new THREE.Vector3(0, 1.44, 0.36);
+    const look = new THREE.Vector3(0, 1.34, 9);
+    car.localToWorld(eye);
+    car.localToWorld(look);
+    camera.position.lerp(eye, 1 - Math.pow(0.00001, dt));
+    camera.lookAt(look);
+    return;
+  }
+
   const baseForward = getWorldForward(car);
   const forward = state.playerCrashed
     ? baseForward.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), state.crashLook.yaw).normalize()
@@ -1281,7 +1356,7 @@ function updateHud() {
   rightSignalBtn.classList.toggle("active", !state.hazard && state.signal === "right");
   hazardsBtn.classList.toggle("active", state.hazard || state.player.userData.hazard);
   if (!state.playerCrashed) {
-    statusEl.textContent = state.crashed ? "Crash in city" : "City clear";
+    statusEl.textContent = state.dashboardView ? "Dashboard view" : state.crashed ? "Crash in city" : "City clear";
   }
 }
 
@@ -1290,16 +1365,17 @@ function onKeyDown(event) {
   if (!key) return;
   ensureAudio();
   keys.add(key);
-  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "q", "e", "z"].includes(key)) {
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "q", "e", "z", "d"].includes(key)) {
     event.preventDefault();
     event.stopPropagation();
   }
-  if (event.repeat && ["q", "e", "z"].includes(key)) return;
+  if (event.repeat && ["q", "e", "z", "d"].includes(key)) return;
   if (state.toggleHeld.has(key)) return;
   if (key === "q") toggleSignal("left");
   if (key === "e") toggleSignal("right");
   if (key === "z") toggleHazards();
-  if (["q", "e", "z"].includes(key)) state.toggleHeld.add(key);
+  if (key === "d") toggleDashboardView();
+  if (["q", "e", "z", "d"].includes(key)) state.toggleHeld.add(key);
 }
 
 function onKeyPress(event) {
@@ -1356,6 +1432,7 @@ function normalizeKey(event) {
     KeyQ: "q",
     KeyE: "e",
     KeyZ: "z",
+    KeyD: "d",
   };
   if (byCode[event.code]) return byCode[event.code];
   return event.key ? event.key.toLowerCase() : "";
@@ -1370,6 +1447,11 @@ function toggleSignal(direction) {
 function toggleHazards() {
   state.hazard = !state.hazard;
   state.signal = "off";
+  renderer.domElement.focus();
+}
+
+function toggleDashboardView() {
+  state.dashboardView = !state.dashboardView;
   renderer.domElement.focus();
 }
 
@@ -1488,6 +1570,7 @@ function restartCity() {
   state.playerCrashed = false;
   state.signal = "off";
   state.hazard = false;
+  state.dashboardView = false;
   state.greenBlockTimer = 0;
   state.crashLook.active = false;
   state.crashLook.yaw = 0;
