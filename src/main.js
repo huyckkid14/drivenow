@@ -56,6 +56,7 @@ const CRASH_SPIN_FRICTION = 3.6;
 const DAMAGE_GRAVITY = 16;
 const DAMAGE_FRICTION = 2.8;
 const DAMAGE_BOUNDS = BOUNDS - 2;
+const TRAFFIC_BLOCK_PADDING = 7;
 const TRAFFIC_CYCLE = (SIGNAL_GREEN_TIME + SIGNAL_YELLOW_TIME + SIGNAL_ALL_RED_TIME) * 2;
 
 const state = {
@@ -356,26 +357,37 @@ function createBots() {
 
 function makeBotStarts() {
   const starts = [];
-  for (const z of GRID) {
-    starts.push({ x: -64, z: z + LANES[1], dir: "east" });
-    starts.push({ x: 64, z: z + LANES[0], dir: "west" });
-  }
-  for (const x of GRID) {
-    starts.push({ x: x + LANES[0], z: 64, dir: "north" });
-    starts.push({ x: x + LANES[1], z: -64, dir: "south" });
+  const roadSections = [-BOUNDS, ...GRID, BOUNDS];
+  const lanePositions = [];
+
+  for (let i = 0; i < roadSections.length - 1; i++) {
+    const start = roadSections[i];
+    const end = roadSections[i + 1];
+    const length = end - start;
+    if (length > TRAFFIC_BLOCK_PADDING * 3) {
+      lanePositions.push(start + TRAFFIC_BLOCK_PADDING, end - TRAFFIC_BLOCK_PADDING);
+    } else {
+      lanePositions.push((start + end) / 2);
+    }
   }
 
-  const extra = [
-    { x: -37, z: 1.75, dir: "east" },
-    { x: 35, z: -1.75, dir: "west" },
-    { x: -25.25, z: 38, dir: "north" },
-    { x: 28.75, z: -36, dir: "south" },
-    { x: -42, z: 28.75, dir: "east" },
-    { x: 44, z: 25.25, dir: "west" },
-    { x: -55.75, z: 42, dir: "north" },
-    { x: 55.75, z: -42, dir: "south" },
-  ];
-  return starts.concat(extra);
+  for (const z of GRID) {
+    for (const x of lanePositions) {
+      starts.push({ x, z: z + LANES[1], dir: "east" });
+      if (Math.abs(x + 50) > 8 || Math.abs(z + LANES[0] + 1.75) > 4) {
+        starts.push({ x, z: z + LANES[0], dir: "west" });
+      }
+    }
+  }
+
+  for (const x of GRID) {
+    for (const z of lanePositions) {
+      starts.push({ x: x + LANES[0], z, dir: "north" });
+      starts.push({ x: x + LANES[1], z, dir: "south" });
+    }
+  }
+
+  return starts;
 }
 
 function makeCar(color, isPlayer) {
@@ -586,7 +598,7 @@ function maybeTurnAtIntersection(bot) {
 
   data.turnMemory = state.time;
   const options = turnOptions(data.dir);
-  const pick = options[Math.floor(Math.abs(Math.sin(bot.id.length + state.time * 0.71)) * options.length)];
+  const pick = options[Math.floor(Math.abs(Math.sin(bot.id + state.time * 0.71)) * options.length)];
   data.dir = pick;
   snapToLane(bot);
 }
