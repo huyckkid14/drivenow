@@ -519,45 +519,68 @@ function createCockpitOverlay() {
   const topMat = new THREE.MeshBasicMaterial({ color: 0x242b2c, depthTest: false, depthWrite: false });
   const glassMat = new THREE.MeshBasicMaterial({ color: 0x07151a, depthTest: false, depthWrite: false });
   const trimMat = new THREE.MeshBasicMaterial({ color: 0x465157, depthTest: false, depthWrite: false });
+  const pillarMat = new THREE.MeshBasicMaterial({ color: 0x050606, depthTest: false, depthWrite: false });
   const wheelMat = new THREE.MeshBasicMaterial({ color: 0x060707, depthTest: false, depthWrite: false });
   const litMat = new THREE.MeshBasicMaterial({ color: 0x31f272, depthTest: false, depthWrite: false });
+  const blueMat = new THREE.MeshBasicMaterial({ color: 0x55aaff, depthTest: false, depthWrite: false });
   const offMat = new THREE.MeshBasicMaterial({ color: 0x243035, depthTest: false, depthWrite: false });
 
-  const dash = new THREE.Mesh(new THREE.BoxGeometry(5.8, 1.18, 0.18), dashMat);
-  dash.position.set(0, -1.08, -1.9);
-  const dashTop = new THREE.Mesh(new THREE.BoxGeometry(5.8, 0.22, 1.25), topMat);
-  dashTop.position.set(0, -0.58, -2.2);
-  cockpit.add(dashTop, dash);
+  const dash = new THREE.Mesh(new THREE.BoxGeometry(6.2, 1.12, 0.2), dashMat);
+  dash.position.set(0, -1.04, -1.78);
+  const dashTop = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.2, 1.4), topMat);
+  dashTop.position.set(0, -0.5, -2.16);
+  const windshieldTop = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.18, 0.08), pillarMat);
+  windshieldTop.position.set(0, 1.28, -1.55);
+  const leftPillar = new THREE.Mesh(new THREE.BoxGeometry(0.22, 3.1, 0.1), pillarMat);
+  leftPillar.position.set(-2.98, -0.05, -1.42);
+  leftPillar.rotation.z = -0.16;
+  const rightPillar = new THREE.Mesh(new THREE.BoxGeometry(0.22, 3.1, 0.1), pillarMat);
+  rightPillar.position.set(2.98, -0.05, -1.42);
+  rightPillar.rotation.z = 0.16;
+  cockpit.add(dashTop, dash, windshieldTop, leftPillar, rightPillar);
 
   const cluster = new THREE.Group();
-  cluster.position.set(0, -0.76, -1.38);
-  const clusterBg = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.8, 0.04), glassMat);
-  const clusterTrim = new THREE.Mesh(new THREE.BoxGeometry(2.12, 1.0, 0.025), trimMat);
-  clusterTrim.position.z = 0.018;
+  cluster.position.set(-0.42, -0.72, -1.18);
+  const clusterBg = new THREE.Mesh(new THREE.BoxGeometry(1.92, 0.78, 0.04), glassMat);
+  const clusterTrim = new THREE.Mesh(new THREE.BoxGeometry(2.12, 0.98, 0.025), trimMat);
   const needle = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.56, 0.045), litMat.clone());
   needle.geometry.translate(0, 0.26, 0);
-  needle.position.set(0, -0.05, 0.07);
-  cluster.add(clusterTrim, clusterBg, needle);
+  needle.position.set(-0.42, -0.08, 0.08);
+  const tach = new THREE.Mesh(new THREE.RingGeometry(0.25, 0.32, 28), trimMat);
+  tach.position.set(-0.42, 0, 0.08);
+  const speedo = new THREE.Mesh(new THREE.RingGeometry(0.25, 0.32, 28), trimMat);
+  speedo.position.set(0.42, 0, 0.08);
+  const speedNeedle = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.48, 0.045), blueMat.clone());
+  speedNeedle.geometry.translate(0, 0.22, 0);
+  speedNeedle.position.set(0.42, -0.06, 0.09);
+  cluster.add(clusterTrim, clusterBg, tach, speedo, needle, speedNeedle);
   cockpit.add(cluster);
 
   const steeringWheel = new THREE.Group();
-  steeringWheel.position.set(0, -1.18, -0.88);
-  steeringWheel.scale.setScalar(1.42);
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.56, 0.06, 12, 48), wheelMat);
-  const hub = new THREE.Mesh(new THREE.CircleGeometry(0.16, 24), wheelMat);
-  const spokeA = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.07, 0.04), wheelMat);
-  const spokeB = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.72, 0.04), wheelMat);
+  steeringWheel.position.set(-0.42, -1.2, -0.78);
+  steeringWheel.scale.setScalar(1.52);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.065, 12, 56), wheelMat);
+  const hub = new THREE.Mesh(new THREE.CircleGeometry(0.18, 28), wheelMat);
+  const spokeA = new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.075, 0.04), wheelMat);
+  const spokeB = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.74, 0.04), wheelMat);
   spokeB.rotation.z = 0.7;
   steeringWheel.add(rim, hub, spokeA, spokeB);
   cockpit.add(steeringWheel);
 
-  const leftSignal = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.05), offMat.clone());
-  leftSignal.position.set(-0.76, -0.74, -1.28);
-  const rightSignal = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.05), offMat.clone());
-  rightSignal.position.set(0.76, -0.74, -1.28);
+  const centerScreen = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.58, 0.05), glassMat);
+  centerScreen.position.set(1.32, -0.76, -1.18);
+  const screenNeedle = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.36, 0.05), blueMat.clone());
+  screenNeedle.geometry.translate(0, 0.16, 0);
+  screenNeedle.position.set(1.32, -0.82, -1.1);
+  cockpit.add(centerScreen, screenNeedle);
+
+  const leftSignal = new THREE.Mesh(new THREE.CircleGeometry(0.14, 20), offMat.clone());
+  leftSignal.position.set(-0.92, -0.68, -1.08);
+  const rightSignal = new THREE.Mesh(new THREE.CircleGeometry(0.14, 20), offMat.clone());
+  rightSignal.position.set(0.08, -0.68, -1.08);
   cockpit.add(leftSignal, rightSignal);
 
-  cockpit.userData = { steeringWheel, needle, leftSignal, rightSignal };
+  cockpit.userData = { steeringWheel, needle: speedNeedle, leftSignal, rightSignal };
   cockpit.traverse((child) => {
     child.renderOrder = 1000;
   });
@@ -1386,8 +1409,8 @@ function setBrakeLights(lamps, active) {
 
 function updateCamera(dt) {
   const car = state.player;
-  cockpit.visible = state.dashboardView && !state.playerCrashed;
-  if (state.dashboardView && !state.playerCrashed) {
+  cockpit.visible = state.dashboardView;
+  if (state.dashboardView) {
     const eye = new THREE.Vector3(0, 1.62, 0.05);
     const look = new THREE.Vector3(0, 1.47, 10);
     car.localToWorld(eye);
