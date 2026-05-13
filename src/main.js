@@ -1358,9 +1358,12 @@ function updateDashboardDisplay(data, leftActive, rightActive) {
 }
 
 function setDashSignal(mesh, active) {
+  if (!mesh?.material) return;
   mesh.material.color.set(active ? 0x48f37d : 0x243035);
-  mesh.material.emissive.set(active ? 0x2ef76f : 0x000000);
-  mesh.material.emissiveIntensity = active ? 1.4 : 0;
+  if (mesh.material.emissive) {
+    mesh.material.emissive.set(active ? 0x2ef76f : 0x000000);
+    mesh.material.emissiveIntensity = active ? 1.4 : 0;
+  }
   mesh.scale.setScalar(active ? 1.2 : 1);
 }
 
