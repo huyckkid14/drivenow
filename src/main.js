@@ -10,6 +10,8 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.04;
 document.body.appendChild(renderer.domElement);
 
 const speedEl = document.querySelector("#speed");
@@ -146,6 +148,9 @@ function createRoads() {
   const asphalt = new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.82 });
   const stripe = new THREE.MeshStandardMaterial({ color: 0xf5f1d0, roughness: 0.7 });
   const crosswalk = new THREE.MeshStandardMaterial({ color: 0xe9ece8, roughness: 0.75 });
+  const curbMat = new THREE.MeshStandardMaterial({ color: 0xd9ded6, roughness: 0.78 });
+  const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x596166, roughness: 0.9 });
+  const arrowMat = new THREE.MeshStandardMaterial({ color: 0xf7f4df, roughness: 0.65 });
 
   for (const z of GRID) {
     const road = new THREE.Mesh(new THREE.BoxGeometry(145, 0.08, ROAD_HALF * 2), asphalt);
@@ -154,10 +159,24 @@ function createRoads() {
     roads.add(road);
     roadSegments.push({ axis: "x", fixed: z });
 
+    for (const edge of [-1, 1]) {
+      const shoulder = new THREE.Mesh(new THREE.BoxGeometry(145, 0.06, 0.38), shoulderMat);
+      shoulder.position.set(0, 0.13, z + edge * (ROAD_HALF - 0.45));
+      roads.add(shoulder);
+      const curb = new THREE.Mesh(new THREE.BoxGeometry(145, 0.16, 0.18), curbMat);
+      curb.position.set(0, 0.2, z + edge * (ROAD_HALF + 0.15));
+      roads.add(curb);
+    }
+
     for (let x = -66; x <= 66; x += 9) {
       const dash = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.1, 0.16), stripe);
       dash.position.set(x, 0.11, z);
       roads.add(dash);
+    }
+
+    for (let x = -48; x <= 48; x += 27) {
+      addLaneArrow(x, z + LANES[1], "east", arrowMat);
+      addLaneArrow(x, z + LANES[0], "west", arrowMat);
     }
   }
 
@@ -168,10 +187,24 @@ function createRoads() {
     roads.add(road);
     roadSegments.push({ axis: "z", fixed: x });
 
+    for (const edge of [-1, 1]) {
+      const shoulder = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.06, 145), shoulderMat);
+      shoulder.position.set(x + edge * (ROAD_HALF - 0.45), 0.13, 0);
+      roads.add(shoulder);
+      const curb = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.16, 145), curbMat);
+      curb.position.set(x + edge * (ROAD_HALF + 0.15), 0.2, 0);
+      roads.add(curb);
+    }
+
     for (let z = -66; z <= 66; z += 9) {
       const dash = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.11, 4.2), stripe);
       dash.position.set(x, 0.12, z);
       roads.add(dash);
+    }
+
+    for (let z = -48; z <= 48; z += 27) {
+      addLaneArrow(x + LANES[0], z, "north", arrowMat);
+      addLaneArrow(x + LANES[1], z, "south", arrowMat);
     }
   }
 
@@ -189,8 +222,32 @@ function createRoads() {
         vStripe.position.set(x - ROAD_HALF - 1.2, 0.2, z + i * 1.15);
         roads.add(vStripe);
       }
+
+      for (const spec of [
+        { px: x - STOP_LINE_OFFSET, pz: z + LANES[1], sx: 0.18, sz: 3.4 },
+        { px: x + STOP_LINE_OFFSET, pz: z + LANES[0], sx: 0.18, sz: 3.4 },
+        { px: x + LANES[0], pz: z + STOP_LINE_OFFSET, sx: 3.4, sz: 0.18 },
+        { px: x + LANES[1], pz: z - STOP_LINE_OFFSET, sx: 3.4, sz: 0.18 },
+      ]) {
+        const stopBar = new THREE.Mesh(new THREE.BoxGeometry(spec.sx, 0.17, spec.sz), stripe);
+        stopBar.position.set(spec.px, 0.23, spec.pz);
+        roads.add(stopBar);
+      }
     }
   }
+}
+
+function addLaneArrow(x, z, dir, material) {
+  const group = new THREE.Group();
+  const stem = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.13, 1.15), material);
+  stem.position.z = -0.28;
+  const head = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.72, 3), material);
+  head.position.z = 0.46;
+  head.rotation.x = Math.PI / 2;
+  group.add(stem, head);
+  group.position.set(x, 0.22, z);
+  group.rotation.y = { north: Math.PI, south: 0, east: Math.PI / 2, west: -Math.PI / 2 }[dir];
+  roads.add(group);
 }
 
 function createBlocks() {
@@ -448,6 +505,8 @@ function makeCar(color, isPlayer) {
     car.add(wheel);
   }
 
+  addCarRealismDetails(car, color);
+
   if (isPlayer) {
     addDashboardInterior(car);
     const marker = new THREE.Mesh(
@@ -466,6 +525,58 @@ function makeCar(color, isPlayer) {
   car.userData.cabin = cabin;
   car.userData.wheels = car.children.filter((child) => child.geometry?.type === "CylinderGeometry");
   return car;
+}
+
+function addCarRealismDetails(car, color) {
+  const bodyAccent = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.12 });
+  const glass = new THREE.MeshStandardMaterial({ color: 0x12313c, roughness: 0.18, metalness: 0.05 });
+  const trim = new THREE.MeshStandardMaterial({ color: 0x111516, roughness: 0.62, metalness: 0.22 });
+  const chrome = new THREE.MeshStandardMaterial({ color: 0xcfd4cf, roughness: 0.35, metalness: 0.5 });
+
+  const hood = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.1, 1.05), bodyAccent);
+  hood.position.set(0, 1.03, 1.05);
+  hood.rotation.x = -0.06;
+  const trunk = new THREE.Mesh(new THREE.BoxGeometry(1.88, 0.08, 0.85), bodyAccent);
+  trunk.position.set(0, 1.0, -1.56);
+  trunk.rotation.x = 0.05;
+  car.add(hood, trunk);
+
+  const windshield = new THREE.Mesh(new THREE.BoxGeometry(1.48, 0.06, 0.72), glass);
+  windshield.position.set(0, 1.47, 0.74);
+  windshield.rotation.x = -0.58;
+  const rearWindow = new THREE.Mesh(new THREE.BoxGeometry(1.38, 0.06, 0.58), glass);
+  rearWindow.position.set(0, 1.44, -1.05);
+  rearWindow.rotation.x = 0.52;
+  car.add(windshield, rearWindow);
+
+  for (const side of [-1, 1]) {
+    const sideWindow = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.46, 1.12), glass);
+    sideWindow.position.set(side * 0.86, 1.34, -0.2);
+    car.add(sideWindow);
+
+    const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.26), trim);
+    mirror.position.set(side * 1.34, 1.08, 0.9);
+    car.add(mirror);
+
+    for (const z of [-1.35, 1.35]) {
+      const fender = new THREE.Mesh(new THREE.TorusGeometry(0.47, 0.045, 8, 20, Math.PI), bodyAccent);
+      fender.position.set(side * 1.23, 0.54, z);
+      fender.rotation.set(Math.PI / 2, 0, side > 0 ? Math.PI / 2 : -Math.PI / 2);
+      car.add(fender);
+      const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.035, 18), chrome);
+      rim.position.set(side * 1.36, 0.33, z);
+      rim.rotation.z = Math.PI / 2;
+      car.add(rim);
+    }
+  }
+
+  const grille = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.22, 0.06), trim);
+  grille.position.set(0, 0.78, 2.22);
+  const frontBumper = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.16, 0.12), chrome);
+  frontBumper.position.set(0, 0.48, 2.25);
+  const rearBumper = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.15, 0.12), chrome);
+  rearBumper.position.set(0, 0.48, -2.25);
+  car.add(grille, frontBumper, rearBumper);
 }
 
 function addDashboardInterior(car) {
@@ -576,7 +687,23 @@ function createCockpitOverlay() {
   const screenNeedle = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.36, 0.05), blueMat.clone());
   screenNeedle.geometry.translate(0, 0.16, 0);
   screenNeedle.position.set(1.12, -1.14, -1.1);
-  cockpit.add(centerScreen, screenNeedle);
+  const consolePanel = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.42, 0.05), trimMat);
+  consolePanel.position.set(1.12, -1.48, -1.15);
+  cockpit.add(centerScreen, screenNeedle, consolePanel);
+
+  for (let i = 0; i < 6; i++) {
+    const button = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.08, 0.055), i % 2 ? blueMat.clone() : offMat.clone());
+    button.position.set(0.78 + (i % 3) * 0.18, -1.43 - Math.floor(i / 3) * 0.12, -1.08);
+    cockpit.add(button);
+  }
+
+  const mirrorGlass = new THREE.MeshBasicMaterial({ color: 0x8bb3c8, depthTest: false, depthWrite: false });
+  const rearMirror = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.24, 0.04), mirrorGlass);
+  rearMirror.position.set(0, 0.72, -1.18);
+  const leftMirror = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.28, 0.04), mirrorGlass);
+  leftMirror.position.set(-2.72, -0.36, -1.1);
+  leftMirror.rotation.z = -0.18;
+  cockpit.add(rearMirror, leftMirror);
 
   const leftSignal = new THREE.Mesh(new THREE.CircleGeometry(0.14, 20), offMat.clone());
   leftSignal.position.set(-0.88, -1.03, -1.08);
