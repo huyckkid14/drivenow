@@ -73,7 +73,6 @@ const state = {
   audio: null,
   lastCrashSound: -10,
   lastHonkSound: -10,
-  spawnCursor: 0,
   greenBlockTimer: 0,
   crashLook: {
     active: false,
@@ -329,8 +328,7 @@ function createPlayer() {
 function createBots() {
   botSpawnCandidates.length = 0;
   botSpawnCandidates.push(...makeBotStarts());
-  state.spawnCursor = 0;
-  updateTrafficSpawns(botSpawnCandidates.length);
+  updateTrafficSpawns();
 }
 
 function makeBotStarts() {
@@ -595,13 +593,12 @@ function updateBots(dt) {
   }
 }
 
-function updateTrafficSpawns(maxAttempts = 18) {
+function updateTrafficSpawns() {
   if (state.playerCrashed || !botSpawnCandidates.length) return;
 
   let botCount = cars.length - 1;
-  for (let i = 0; i < maxAttempts && botCount < MAX_BOT_CARS; i++) {
-    const candidate = botSpawnCandidates[state.spawnCursor % botSpawnCandidates.length];
-    state.spawnCursor += 1;
+  for (const candidate of botSpawnCandidates) {
+    if (botCount >= MAX_BOT_CARS) return;
     if (!canSpawnBotAt(candidate)) continue;
 
     spawnBot(candidate);
@@ -609,10 +606,11 @@ function updateTrafficSpawns(maxAttempts = 18) {
   }
 }
 
-function canSpawnBotAt(candidate) {
+function canSpawnBotAt(candidate, ignoredCar = null) {
   const minimumClearanceSq = BOT_SPAWN_CLEARANCE ** 2;
 
   for (const car of collidableCars) {
+    if (car === ignoredCar) continue;
     const dx = candidate.x - car.position.x;
     const dz = candidate.z - car.position.z;
     if (dx * dx + dz * dz <= minimumClearanceSq) return false;
@@ -1599,11 +1597,42 @@ function keepNearRoad(car) {
 }
 
 function wrapBot(bot) {
-  if (bot.position.x > BOUNDS) bot.position.x = -BOUNDS;
-  if (bot.position.x < -BOUNDS) bot.position.x = BOUNDS;
-  if (bot.position.z > BOUNDS) bot.position.z = -BOUNDS;
-  if (bot.position.z < -BOUNDS) bot.position.z = BOUNDS;
-  snapToLane(bot);
+  const data = bot.userData;
+  const next = { x: bot.position.x, z: bot.position.z, dir: data.dir };
+  let wrapped = false;
+
+  if (next.x > BOUNDS) {
+    next.x = -BOUNDS;
+    wrapped = true;
+  }
+  if (next.x < -BOUNDS) {
+    next.x = BOUNDS;
+    wrapped = true;
+  }
+  if (next.z > BOUNDS) {
+    next.z = -BOUNDS;
+    wrapped = true;
+  }
+  if (next.z < -BOUNDS) {
+    next.z = BOUNDS;
+    wrapped = true;
+  }
+  if (!wrapped) return;
+
+  if (canSpawnBotAt(next, bot)) {
+    bot.position.set(next.x, 0, next.z);
+    snapToLane(bot);
+    return;
+  }
+
+  city.remove(bot);
+  removeFromArray(cars, bot);
+  removeFromArray(collidableCars, bot);
+}
+
+function removeFromArray(items, item) {
+  const index = items.indexOf(item);
+  if (index >= 0) items.splice(index, 1);
 }
 
 function getForward(car) {
