@@ -56,8 +56,9 @@ const CRASH_SPIN_FRICTION = 3.6;
 const DAMAGE_GRAVITY = 16;
 const DAMAGE_FRICTION = 2.8;
 const DAMAGE_BOUNDS = BOUNDS - 2;
-const TRAFFIC_BLOCK_PADDING = 7;
+const TRAFFIC_BLOCK_PADDING = 12;
 const TRAFFIC_CYCLE = (SIGNAL_GREEN_TIME + SIGNAL_YELLOW_TIME + SIGNAL_ALL_RED_TIME) * 2;
+const PLAYER_START = new THREE.Vector3(-62, 0, -9);
 
 const state = {
   crashed: false,
@@ -156,6 +157,11 @@ function createRoads() {
       roads.add(dash);
     }
   }
+
+  const spawnPad = new THREE.Mesh(new THREE.BoxGeometry(12, 0.09, 6.4), asphalt);
+  spawnPad.position.set(PLAYER_START.x, 0.06, PLAYER_START.z);
+  spawnPad.receiveShadow = true;
+  roads.add(spawnPad);
 
   for (const x of GRID) {
     const road = new THREE.Mesh(new THREE.BoxGeometry(ROAD_HALF * 2, 0.09, 145), asphalt);
@@ -292,7 +298,7 @@ function lampDisc(color, y) {
 function createPlayer() {
   const player = makeCar(0xffd23f, true);
   player.name = "player";
-  player.position.set(-50, 0, -1.75);
+  player.position.copy(PLAYER_START);
   player.rotation.y = Math.PI / 2;
   player.userData = {
     player: true,
@@ -363,24 +369,21 @@ function makeBotStarts() {
   for (let i = 0; i < roadSections.length - 1; i++) {
     const start = roadSections[i];
     const end = roadSections[i + 1];
-    const length = end - start;
-    if (length > TRAFFIC_BLOCK_PADDING * 3) {
-      lanePositions.push(start + TRAFFIC_BLOCK_PADDING, end - TRAFFIC_BLOCK_PADDING);
-    } else {
-      lanePositions.push((start + end) / 2);
-    }
+    lanePositions.push((start + end) / 2);
   }
 
   for (const z of GRID) {
     for (const x of lanePositions) {
-      starts.push({ x, z: z + LANES[1], dir: "east" });
-      if (Math.abs(x + 50) > 8 || Math.abs(z + LANES[0] + 1.75) > 4) {
+      if (new THREE.Vector3(x, 0, z + LANES[1]).distanceToSquared(PLAYER_START) > TRAFFIC_BLOCK_PADDING ** 2) {
+        starts.push({ x, z: z + LANES[1], dir: "east" });
+      }
+      if (new THREE.Vector3(x, 0, z + LANES[0]).distanceToSquared(PLAYER_START) > TRAFFIC_BLOCK_PADDING ** 2) {
         starts.push({ x, z: z + LANES[0], dir: "west" });
       }
     }
   }
 
-  for (const x of GRID) {
+  for (const x of [GRID[0], GRID[2], GRID[4]]) {
     for (const z of lanePositions) {
       starts.push({ x: x + LANES[0], z, dir: "north" });
       starts.push({ x: x + LANES[1], z, dir: "south" });
