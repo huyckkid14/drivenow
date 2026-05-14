@@ -58,7 +58,7 @@ const DAMAGE_FRICTION = 2.8;
 const DAMAGE_BOUNDS = BOUNDS - 2;
 const TRAFFIC_BLOCK_PADDING = 12;
 const TRAFFIC_CYCLE = (SIGNAL_GREEN_TIME + SIGNAL_YELLOW_TIME + SIGNAL_ALL_RED_TIME) * 2;
-const PLAYER_START = new THREE.Vector3(-62, 0, -9);
+const PLAYER_START = new THREE.Vector3(-62, 0, -1.75);
 
 const state = {
   crashed: false,
@@ -157,11 +157,6 @@ function createRoads() {
       roads.add(dash);
     }
   }
-
-  const spawnPad = new THREE.Mesh(new THREE.BoxGeometry(12, 0.09, 6.4), asphalt);
-  spawnPad.position.set(PLAYER_START.x, 0.06, PLAYER_START.z);
-  spawnPad.receiveShadow = true;
-  roads.add(spawnPad);
 
   for (const x of GRID) {
     const road = new THREE.Mesh(new THREE.BoxGeometry(ROAD_HALF * 2, 0.09, 145), asphalt);
