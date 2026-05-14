@@ -29,6 +29,7 @@ const roadSegments = [];
 const collidableCars = [];
 const damagePieces = [];
 const buildingObstacles = [];
+const botSpawnCandidates = [];
 const buildings = new THREE.Group();
 const roads = new THREE.Group();
 const city = new THREE.Group();
@@ -58,9 +59,10 @@ const DAMAGE_FRICTION = 2.8;
 const DAMAGE_BOUNDS = BOUNDS - 2;
 const BOT_SPAWN_CLEARANCE = 13;
 const SAME_LANE_SPAWN_CLEARANCE = 100;
+const TRAFFIC_SPAWN_STEP = 12;
+const MAX_BOT_CARS = 70;
 const TRAFFIC_CYCLE = (SIGNAL_GREEN_TIME + SIGNAL_YELLOW_TIME + SIGNAL_ALL_RED_TIME) * 2;
 const PLAYER_START = new THREE.Vector3(-62, 0, 1.75);
-const PLAYER_START_DIR = "east";
 
 const state = {
   crashed: false,
@@ -71,6 +73,7 @@ const state = {
   audio: null,
   lastCrashSound: -10,
   lastHonkSound: -10,
+  spawnCursor: 0,
   greenBlockTimer: 0,
   crashLook: {
     active: false,
@@ -324,94 +327,72 @@ function createPlayer() {
 }
 
 function createBots() {
-  const starts = makeBotStarts();
-
-  starts.forEach((start, index) => {
-    const bot = makeCar(botColors[index % botColors.length], false);
-    bot.position.set(start.x, 0, start.z);
-    bot.rotation.y = yawForDir(start.dir);
-    bot.userData = {
-      player: false,
-      speed: 10 + (index % 4) * 1.5,
-      desiredSpeed: 13 + (index % 3) * 2.2,
-      maxSpeed: 20,
-      dir: start.dir,
-      turnMemory: 0,
-      immobilized: false,
-      hazard: false,
-      blink: Math.random(),
-      braking: false,
-      velocity: new THREE.Vector3(),
-      angularVelocity: 0,
-      crashed: false,
-      crashTimer: 0,
-      lastHonk: -10,
-      lastDamage: -10,
-      lastPlayerDistance: null,
-      bodyColor: botColors[index % botColors.length],
-      indicators: bot.userData.indicators,
-      brakeLights: bot.userData.brakeLights,
-    };
-    city.add(bot);
-    cars.push(bot);
-    collidableCars.push(bot);
-  });
+  botSpawnCandidates.length = 0;
+  botSpawnCandidates.push(...makeBotStarts());
+  state.spawnCursor = 0;
+  updateTrafficSpawns(botSpawnCandidates.length);
 }
 
 function makeBotStarts() {
   const starts = [];
   const roadSections = [-BOUNDS, ...GRID, BOUNDS];
   const lanePositions = [];
-  const minimumClearanceSq = BOT_SPAWN_CLEARANCE ** 2;
 
   for (let i = 0; i < roadSections.length - 1; i++) {
     const start = roadSections[i];
     const end = roadSections[i + 1];
-    lanePositions.push((start + end) / 2);
+    for (let value = start + TRAFFIC_SPAWN_STEP / 2; value < end; value += TRAFFIC_SPAWN_STEP) {
+      lanePositions.push(value);
+    }
   }
 
   for (const z of GRID) {
     for (const x of lanePositions) {
-      addBotStart(starts, { x, z: z + LANES[1], dir: "east" }, minimumClearanceSq);
-      addBotStart(starts, { x, z: z + LANES[0], dir: "west" }, minimumClearanceSq);
+      starts.push({ x, z: z + LANES[1], dir: "east" });
+      starts.push({ x, z: z + LANES[0], dir: "west" });
     }
   }
 
   for (const x of [GRID[0], GRID[2], GRID[4]]) {
     for (const z of lanePositions) {
-      addBotStart(starts, { x: x + LANES[0], z, dir: "north" }, minimumClearanceSq);
-      addBotStart(starts, { x: x + LANES[1], z, dir: "south" }, minimumClearanceSq);
+      starts.push({ x: x + LANES[0], z, dir: "north" });
+      starts.push({ x: x + LANES[1], z, dir: "south" });
     }
   }
 
   return starts;
 }
 
-function addBotStart(starts, candidate, minimumClearanceSq) {
-  if (sameLaneDistance(candidate, { x: PLAYER_START.x, z: PLAYER_START.z, dir: PLAYER_START_DIR }) <= SAME_LANE_SPAWN_CLEARANCE) {
-    return;
-  }
-
-  for (const start of starts) {
-    if (sameLaneDistance(candidate, start) <= SAME_LANE_SPAWN_CLEARANCE) return;
-
-    const dx = candidate.x - start.x;
-    const dz = candidate.z - start.z;
-    if (dx * dx + dz * dz <= minimumClearanceSq) return;
-  }
-
-  starts.push(candidate);
-}
-
-function sameLaneDistance(a, b) {
-  if (a.dir !== b.dir) return Infinity;
-  if ((a.dir === "east" || a.dir === "west") && Math.abs(a.z - b.z) < 0.01) {
-    return Math.abs(a.x - b.x);
-  }
-  if ((a.dir === "north" || a.dir === "south") && Math.abs(a.x - b.x) < 0.01) {
-    return Math.abs(a.z - b.z);
-  }
-  return Infinity;
+function spawnBot(start) {
+  const index = cars.length;
+  const bot = makeCar(botColors[index % botColors.length], false);
+  bot.position.set(start.x, 0, start.z);
+  bot.rotation.y = yawForDir(start.dir);
+  bot.userData = {
+    player: false,
+    speed: 10 + (index % 4) * 1.5,
+    desiredSpeed: 13 + (index % 3) * 2.2,
+    maxSpeed: 20,
+    dir: start.dir,
+    turnMemory: state.time,
+    immobilized: false,
+    hazard: false,
+    blink: Math.random(),
+    braking: false,
+    velocity: new THREE.Vector3(),
+    angularVelocity: 0,
+    crashed: false,
+    crashTimer: 0,
+    lastHonk: -10,
+    lastDamage: -10,
+    lastPlayerDistance: null,
+    bodyColor: botColors[index % botColors.length],
+    indicators: bot.userData.indicators,
+    brakeLights: bot.userData.brakeLights,
+  };
+  city.add(bot);
+  cars.push(bot);
+  collidableCars.push(bot);
 }
 
 function makeCar(color, isPlayer) {
@@ -523,6 +504,7 @@ function animate() {
   updateDamagePieces(dt);
   updatePlayer(dt);
   updateBots(dt);
+  updateTrafficSpawns();
   updateDriverReactions(dt);
   updateCollisions(dt);
   updateSignals(dt);
@@ -611,6 +593,43 @@ function updateBots(dt) {
     if (signalStop) alignWithStopLine(bot, signalStop, dt, previous, !frontBlocked);
     wrapBot(bot);
   }
+}
+
+function updateTrafficSpawns(maxAttempts = 18) {
+  if (state.playerCrashed || !botSpawnCandidates.length) return;
+
+  let botCount = cars.length - 1;
+  for (let i = 0; i < maxAttempts && botCount < MAX_BOT_CARS; i++) {
+    const candidate = botSpawnCandidates[state.spawnCursor % botSpawnCandidates.length];
+    state.spawnCursor += 1;
+    if (!canSpawnBotAt(candidate)) continue;
+
+    spawnBot(candidate);
+    botCount += 1;
+  }
+}
+
+function canSpawnBotAt(candidate) {
+  const minimumClearanceSq = BOT_SPAWN_CLEARANCE ** 2;
+
+  for (const car of collidableCars) {
+    const dx = candidate.x - car.position.x;
+    const dz = candidate.z - car.position.z;
+    if (dx * dx + dz * dz <= minimumClearanceSq) return false;
+    if (sameLaneDistanceToCar(candidate, car) <= SAME_LANE_SPAWN_CLEARANCE) return false;
+  }
+
+  return true;
+}
+
+function sameLaneDistanceToCar(candidate, car) {
+  if (candidate.dir === "east" || candidate.dir === "west") {
+    if (Math.abs(candidate.z - car.position.z) < 0.8) return Math.abs(candidate.x - car.position.x);
+  } else if (Math.abs(candidate.x - car.position.x) < 0.8) {
+    return Math.abs(candidate.z - car.position.z);
+  }
+
+  return Infinity;
 }
 
 function maybeTurnAtIntersection(bot) {
