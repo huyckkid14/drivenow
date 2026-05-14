@@ -59,7 +59,6 @@ const DAMAGE_FRICTION = 2.8;
 const DAMAGE_BOUNDS = BOUNDS - 2;
 const BOT_SPAWN_CLEARANCE = 13;
 const SAME_LANE_SPAWN_CLEARANCE = 100;
-const TRAFFIC_SPAWN_STEP = 12;
 const MAX_BOT_CARS = 70;
 const TRAFFIC_CYCLE = (SIGNAL_GREEN_TIME + SIGNAL_YELLOW_TIME + SIGNAL_ALL_RED_TIME) * 2;
 const PLAYER_START = new THREE.Vector3(-62, 0, 1.75);
@@ -333,29 +332,15 @@ function createBots() {
 
 function makeBotStarts() {
   const starts = [];
-  const roadSections = [-BOUNDS, ...GRID, BOUNDS];
-  const lanePositions = [];
-
-  for (let i = 0; i < roadSections.length - 1; i++) {
-    const start = roadSections[i];
-    const end = roadSections[i + 1];
-    for (let value = start + TRAFFIC_SPAWN_STEP / 2; value < end; value += TRAFFIC_SPAWN_STEP) {
-      lanePositions.push(value);
-    }
-  }
 
   for (const z of GRID) {
-    for (const x of lanePositions) {
-      starts.push({ x, z: z + LANES[1], dir: "east" });
-      starts.push({ x, z: z + LANES[0], dir: "west" });
-    }
+    starts.push({ x: -BOUNDS, z: z + LANES[1], dir: "east" });
+    starts.push({ x: BOUNDS, z: z + LANES[0], dir: "west" });
   }
 
   for (const x of [GRID[0], GRID[2], GRID[4]]) {
-    for (const z of lanePositions) {
-      starts.push({ x: x + LANES[0], z, dir: "north" });
-      starts.push({ x: x + LANES[1], z, dir: "south" });
-    }
+    starts.push({ x: x + LANES[0], z: BOUNDS, dir: "north" });
+    starts.push({ x: x + LANES[1], z: -BOUNDS, dir: "south" });
   }
 
   return starts;
