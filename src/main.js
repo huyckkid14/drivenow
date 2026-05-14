@@ -56,8 +56,8 @@ const CRASH_SPIN_FRICTION = 3.6;
 const DAMAGE_GRAVITY = 16;
 const DAMAGE_FRICTION = 2.8;
 const DAMAGE_BOUNDS = BOUNDS - 2;
-const TRAFFIC_BLOCK_PADDING = 12;
-const BOT_SPAWN_CLEARANCE = 6.4;
+const PLAYER_SPAWN_CLEARANCE = 24;
+const BOT_SPAWN_CLEARANCE = 13;
 const TRAFFIC_CYCLE = (SIGNAL_GREEN_TIME + SIGNAL_YELLOW_TIME + SIGNAL_ALL_RED_TIME) * 2;
 const PLAYER_START = new THREE.Vector3(-62, 0, 1.75);
 
@@ -361,6 +361,7 @@ function makeBotStarts() {
   const starts = [];
   const roadSections = [-BOUNDS, ...GRID, BOUNDS];
   const lanePositions = [];
+  const playerClearanceSq = PLAYER_SPAWN_CLEARANCE ** 2;
   const minimumClearanceSq = BOT_SPAWN_CLEARANCE ** 2;
 
   for (let i = 0; i < roadSections.length - 1; i++) {
@@ -371,24 +372,24 @@ function makeBotStarts() {
 
   for (const z of GRID) {
     for (const x of lanePositions) {
-      addBotStart(starts, { x, z: z + LANES[1], dir: "east" }, minimumClearanceSq);
-      addBotStart(starts, { x, z: z + LANES[0], dir: "west" }, minimumClearanceSq);
+      addBotStart(starts, { x, z: z + LANES[1], dir: "east" }, playerClearanceSq, minimumClearanceSq);
+      addBotStart(starts, { x, z: z + LANES[0], dir: "west" }, playerClearanceSq, minimumClearanceSq);
     }
   }
 
   for (const x of [GRID[0], GRID[2], GRID[4]]) {
     for (const z of lanePositions) {
-      addBotStart(starts, { x: x + LANES[0], z, dir: "north" }, minimumClearanceSq);
-      addBotStart(starts, { x: x + LANES[1], z, dir: "south" }, minimumClearanceSq);
+      addBotStart(starts, { x: x + LANES[0], z, dir: "north" }, playerClearanceSq, minimumClearanceSq);
+      addBotStart(starts, { x: x + LANES[1], z, dir: "south" }, playerClearanceSq, minimumClearanceSq);
     }
   }
 
   return starts;
 }
 
-function addBotStart(starts, candidate, minimumClearanceSq) {
+function addBotStart(starts, candidate, playerClearanceSq, minimumClearanceSq) {
   const position = new THREE.Vector3(candidate.x, 0, candidate.z);
-  if (position.distanceToSquared(PLAYER_START) <= TRAFFIC_BLOCK_PADDING ** 2) return;
+  if (position.distanceToSquared(PLAYER_START) <= playerClearanceSq) return;
 
   for (const start of starts) {
     const dx = candidate.x - start.x;
