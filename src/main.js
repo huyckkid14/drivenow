@@ -57,8 +57,9 @@ const DAMAGE_GRAVITY = 16;
 const DAMAGE_FRICTION = 2.8;
 const DAMAGE_BOUNDS = BOUNDS - 2;
 const TRAFFIC_BLOCK_PADDING = 12;
+const BOT_SPAWN_CLEARANCE = 6.4;
 const TRAFFIC_CYCLE = (SIGNAL_GREEN_TIME + SIGNAL_YELLOW_TIME + SIGNAL_ALL_RED_TIME) * 2;
-const PLAYER_START = new THREE.Vector3(-62, 0, -1.75);
+const PLAYER_START = new THREE.Vector3(-62, 0, 1.75);
 
 const state = {
   crashed: false,
@@ -360,6 +361,7 @@ function makeBotStarts() {
   const starts = [];
   const roadSections = [-BOUNDS, ...GRID, BOUNDS];
   const lanePositions = [];
+  const minimumClearanceSq = BOT_SPAWN_CLEARANCE ** 2;
 
   for (let i = 0; i < roadSections.length - 1; i++) {
     const start = roadSections[i];
@@ -369,23 +371,32 @@ function makeBotStarts() {
 
   for (const z of GRID) {
     for (const x of lanePositions) {
-      if (new THREE.Vector3(x, 0, z + LANES[1]).distanceToSquared(PLAYER_START) > TRAFFIC_BLOCK_PADDING ** 2) {
-        starts.push({ x, z: z + LANES[1], dir: "east" });
-      }
-      if (new THREE.Vector3(x, 0, z + LANES[0]).distanceToSquared(PLAYER_START) > TRAFFIC_BLOCK_PADDING ** 2) {
-        starts.push({ x, z: z + LANES[0], dir: "west" });
-      }
+      addBotStart(starts, { x, z: z + LANES[1], dir: "east" }, minimumClearanceSq);
+      addBotStart(starts, { x, z: z + LANES[0], dir: "west" }, minimumClearanceSq);
     }
   }
 
   for (const x of [GRID[0], GRID[2], GRID[4]]) {
     for (const z of lanePositions) {
-      starts.push({ x: x + LANES[0], z, dir: "north" });
-      starts.push({ x: x + LANES[1], z, dir: "south" });
+      addBotStart(starts, { x: x + LANES[0], z, dir: "north" }, minimumClearanceSq);
+      addBotStart(starts, { x: x + LANES[1], z, dir: "south" }, minimumClearanceSq);
     }
   }
 
   return starts;
+}
+
+function addBotStart(starts, candidate, minimumClearanceSq) {
+  const position = new THREE.Vector3(candidate.x, 0, candidate.z);
+  if (position.distanceToSquared(PLAYER_START) <= TRAFFIC_BLOCK_PADDING ** 2) return;
+
+  for (const start of starts) {
+    const dx = candidate.x - start.x;
+    const dz = candidate.z - start.z;
+    if (dx * dx + dz * dz <= minimumClearanceSq) return;
+  }
+
+  starts.push(candidate);
 }
 
 function makeCar(color, isPlayer) {
