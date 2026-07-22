@@ -19,6 +19,16 @@
         <button id="rightSignal" type="button">E Right</button>
         <button id="hazards" type="button">Z Hazards</button>
       </div>
+      <label class="range-control" for="botSensitivity">
+        <span>Bot sensitivity</span>
+        <input id="botSensitivity" type="range" min="0" max="100" value="0" step="1" />
+        <output id="botSensitivityValue" for="botSensitivity">Original</output>
+      </label>
+      <label class="range-control" for="trafficDensity">
+        <span>Traffic</span>
+        <input id="trafficDensity" type="range" min="0" max="100" value="100" step="1" />
+        <output id="trafficDensityValue" for="trafficDensity">200 cars</output>
+      </label>
     </div>
     <button id="restart" type="button" hidden>Restart city</button>
     <div id="loading">Loading city...</div>
@@ -29,6 +39,6 @@
         }
       }
     </script>
-    <script type="module" src="./src/main.js?v=30"></script>
+    <script type="module" src="./src/main.js?v=73"></script>
   </body>
 </html>
