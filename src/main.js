@@ -103,6 +103,7 @@ const state = {
   lastHonkSound: -10,
   greenBlockTimer: 0,
   doorMotionStart: -10,
+  carTransition: null,
   botSensitivity: 0,
   trafficDensity: 1,
   trafficInitialized: false,
@@ -951,7 +952,7 @@ function updateTrafficLights() {
 function updatePlayer(dt) {
   const car = state.player;
   const data = car.userData;
-  if (data.immobilized || data.crashed || state.onFoot) {
+  if (data.immobilized || data.crashed || state.onFoot || state.carTransition) {
     data.revRatio = moveToward(data.revRatio || 0, 0, dt * 4.5);
     return;
   }
@@ -1015,7 +1016,7 @@ function updatePlayer(dt) {
 
 function updatePedestrian(dt) {
   const person = state.pedestrian;
-  if (!person || !state.onFoot || state.securityRoom) return;
+  if (!person || !state.onFoot || state.securityRoom || state.carTransition) return;
   const data = person.userData;
   const moveInput = (keys.has("arrowup") ? 1 : 0) - (keys.has("arrowdown") ? 1 : 0);
   const steerInput = (keys.has("arrowleft") ? 1 : 0) - (keys.has("arrowright") ? 1 : 0);
@@ -1050,10 +1051,82 @@ function updateCarDoor(dt) {
   if (!door) return;
   const elapsed = state.time - state.doorMotionStart;
   let target = 0;
-  if (elapsed >= 0 && elapsed < 0.48) target = -1.05;
-  else if (elapsed < 0.7) target = -1.05;
-  const speed = target < door.rotation.y ? 3.2 : 2.25;
+  if (elapsed >= 0 && elapsed < 0.98) target = 1.05;
+  const speed = target > 0 ? 3.2 : 2.25;
   door.rotation.y = moveToward(door.rotation.y, target, dt * speed);
+
+  const transition = state.carTransition;
+  if (!transition) return;
+  const stepStart = 0.34;
+  const stepEnd = 0.92;
+  if (elapsed >= stepStart) {
+    if (!transition.started) beginCarStep(transition);
+    const progress = THREE.MathUtils.clamp((elapsed - stepStart) / (stepEnd - stepStart), 0, 1);
+    animateCarStep(transition, progress);
+    if (!transition.finished && progress >= 1) finishCarStep(transition);
+  }
+  if (elapsed >= 1.5) state.carTransition = null;
+}
+
+function carDoorwayPoint(x) {
+  const point = new THREE.Vector3(x, 0, -0.15);
+  state.player.localToWorld(point);
+  return point;
+}
+
+function beginCarStep(transition) {
+  const car = state.player;
+  const person = state.pedestrian;
+  transition.started = true;
+  transition.innerPoint = carDoorwayPoint(0.72);
+  transition.outerPoint = carDoorwayPoint(2.1);
+  if (transition.type === "exit") {
+    state.onFoot = true;
+    person.position.copy(transition.innerPoint);
+    person.rotation.y = car.rotation.y;
+    person.visible = true;
+    state.carBeacon.visible = true;
+    statusEl.textContent = "Stepping out…";
+  } else {
+    transition.outerPoint.copy(transition.from);
+    statusEl.textContent = "Stepping into car…";
+  }
+}
+
+function animateCarStep(transition, progress) {
+  const person = state.pedestrian;
+  const eased = progress * progress * (3 - 2 * progress);
+  const from = transition.type === "exit" ? transition.innerPoint : transition.outerPoint;
+  const to = transition.type === "exit" ? transition.outerPoint : transition.innerPoint;
+  person.position.lerpVectors(from, to, eased);
+  person.position.y += Math.sin(progress * Math.PI) * 0.12;
+  const stride = Math.sin(progress * Math.PI * 2) * 0.48;
+  person.userData.leftLeg.rotation.x = stride;
+  person.userData.rightLeg.rotation.x = -stride;
+  person.userData.leftArm.rotation.x = -stride * 0.55;
+  person.userData.rightArm.rotation.x = stride * 0.55;
+}
+
+function finishCarStep(transition) {
+  const person = state.pedestrian;
+  transition.finished = true;
+  person.userData.leftLeg.rotation.x = 0;
+  person.userData.rightLeg.rotation.x = 0;
+  person.userData.leftArm.rotation.x = 0;
+  person.userData.rightArm.rotation.x = 0;
+  if (transition.type === "exit") {
+    person.position.copy(transition.outerPoint);
+    statusEl.textContent = "On foot — follow the blue beacon back to your car";
+    return;
+  }
+
+  state.onFoot = false;
+  person.userData.velocity.set(0, 0, 0);
+  person.userData.speed = 0;
+  person.userData.steer = 0;
+  person.visible = false;
+  state.carBeacon.visible = false;
+  statusEl.textContent = "Back in the car";
 }
 
 function updateNpcPedestrians(dt) {
@@ -1181,6 +1254,7 @@ function toggleCarExit() {
   const car = state.player;
   const person = state.pedestrian;
   if (!car || !person) return;
+  if (state.carTransition) return;
   if (state.securityRoom) {
     state.securityRoom = false;
     state.securitySelected = null;
@@ -1204,17 +1278,11 @@ function toggleCarExit() {
       statusEl.textContent = "Stop the car before getting out";
       return;
     }
-    state.onFoot = true;
     state.doorMotionStart = state.time;
+    state.carTransition = { type: "exit", started: false, finished: false };
     car.userData.speed = 0;
     car.userData.velocity.set(0, 0, 0);
-    const exitPoint = new THREE.Vector3(2.1, 0, -0.15);
-    car.localToWorld(exitPoint);
-    person.position.copy(exitPoint);
-    person.rotation.y = car.rotation.y;
-    person.visible = true;
-    state.carBeacon.visible = true;
-    statusEl.textContent = "On foot — follow the blue beacon back to your car";
+    statusEl.textContent = "Opening door…";
     return;
   }
   if (person.position.distanceTo(car.position) > 3.3) {
@@ -1225,14 +1293,12 @@ function toggleCarExit() {
     statusEl.textContent = "The car is wrecked — continue on foot or restart";
     return;
   }
-  state.onFoot = false;
   state.doorMotionStart = state.time;
+  state.carTransition = { type: "enter", started: false, finished: false, from: person.position.clone() };
   person.userData.velocity.set(0, 0, 0);
   person.userData.speed = 0;
   person.userData.steer = 0;
-  person.visible = false;
-  state.carBeacon.visible = false;
-  statusEl.textContent = "Back in the car";
+  statusEl.textContent = "Opening door…";
 }
 
 function updateBots(dt) {
@@ -2893,6 +2959,7 @@ function restartCity() {
   state.securityFeedCursor = 0;
   state.greenBlockTimer = 0;
   state.doorMotionStart = -10;
+  state.carTransition = null;
   state.crashLook.active = false;
   state.crashLook.yaw = 0;
   state.crashLook.pitch = 0;
