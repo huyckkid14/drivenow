@@ -102,6 +102,7 @@ const state = {
   lastCrashSound: -10,
   lastHonkSound: -10,
   greenBlockTimer: 0,
+  doorMotionStart: -10,
   botSensitivity: 0,
   trafficDensity: 1,
   trafficInitialized: false,
@@ -662,7 +663,17 @@ function makeNpcPedestrian(index) {
   const rightLeg = pedestrianLimb(0.2, 0.76, pants, -0.17, 0.72);
   person.add(torso, head, leftArm, rightArm, leftLeg, rightLeg);
   person.traverse((part) => { if (part.isMesh) part.castShadow = true; });
-  person.userData = { speed: 1.05 + (index % 4) * 0.12, gait: index, fallenUntil: 0, leftArm, rightArm, leftLeg, rightLeg };
+  person.userData = {
+    speed: 1.05 + (index % 4) * 0.12,
+    gait: index,
+    fallenUntil: 0,
+    fallStart: -1,
+    fallSide: 0,
+    leftArm,
+    rightArm,
+    leftLeg,
+    rightLeg,
+  };
   return person;
 }
 
@@ -1037,17 +1048,35 @@ function updatePedestrian(dt) {
 function updateCarDoor(dt) {
   const door = state.player?.userData.driverDoor;
   if (!door) return;
-  const target = state.onFoot ? -1.05 : 0;
-  door.rotation.y = moveToward(door.rotation.y, target, dt * 2.8);
+  const elapsed = state.time - state.doorMotionStart;
+  let target = 0;
+  if (elapsed >= 0 && elapsed < 0.48) target = -1.05;
+  else if (elapsed < 0.7) target = -1.05;
+  const speed = target < door.rotation.y ? 3.2 : 2.25;
+  door.rotation.y = moveToward(door.rotation.y, target, dt * speed);
 }
 
 function updateNpcPedestrians(dt) {
   const player = state.player;
   for (const person of npcPedestrians) {
     const data = person.userData;
+    if (data.fallStart >= 0) {
+      const progress = THREE.MathUtils.clamp((state.time - data.fallStart) / 0.72, 0, 1);
+      const eased = progress * progress * (3 - 2 * progress);
+      person.rotation.x = THREE.MathUtils.lerp(data.fallFromX, -Math.PI / 2, eased);
+      person.rotation.z = THREE.MathUtils.lerp(data.fallFromZ, data.fallSide * 0.16, eased);
+      person.position.y = THREE.MathUtils.lerp(data.fallFromY, 0.38, eased);
+      data.leftArm.rotation.x = THREE.MathUtils.lerp(data.fallLeftArm, -0.78, eased);
+      data.rightArm.rotation.x = THREE.MathUtils.lerp(data.fallRightArm, 0.62, eased);
+      data.leftLeg.rotation.x = THREE.MathUtils.lerp(data.fallLeftLeg, 0.18, eased);
+      data.rightLeg.rotation.x = THREE.MathUtils.lerp(data.fallRightLeg, -0.12, eased);
+      if (progress >= 1) data.fallStart = -1;
+      continue;
+    }
     if (data.fallenUntil > state.time) continue;
-    if (Math.abs(person.rotation.x) > 0.02 || person.position.y > 0.01) {
+    if (Math.abs(person.rotation.x) > 0.02 || Math.abs(person.rotation.z) > 0.02 || person.position.y > 0.01) {
       person.rotation.x = moveToward(person.rotation.x, 0, dt * 3.2);
+      person.rotation.z = moveToward(person.rotation.z, 0, dt * 1.8);
       person.position.y = moveToward(person.position.y, 0, dt * 0.9);
       continue;
     }
@@ -1120,13 +1149,16 @@ function npcMustWaitForSignal(person) {
 function knockDownPedestrian(person) {
   const data = person.userData;
   if (data.fallenUntil > state.time) return;
-  data.fallenUntil = state.time + 5;
-  person.rotation.x = -Math.PI / 2;
-  person.position.y = 0.38;
-  data.leftLeg.rotation.x = 0;
-  data.rightLeg.rotation.x = 0;
-  data.leftArm.rotation.x = -0.6;
-  data.rightArm.rotation.x = 0.6;
+  data.fallStart = state.time;
+  data.fallenUntil = state.time + 5.72;
+  data.fallSide = Math.random() < 0.5 ? -1 : 1;
+  data.fallFromX = person.rotation.x;
+  data.fallFromZ = person.rotation.z;
+  data.fallFromY = person.position.y;
+  data.fallLeftArm = data.leftArm.rotation.x;
+  data.fallRightArm = data.rightArm.rotation.x;
+  data.fallLeftLeg = data.leftLeg.rotation.x;
+  data.fallRightLeg = data.rightLeg.rotation.x;
   state.player.userData.speed *= 0.86;
   statusEl.textContent = "Pedestrian hit — they will get back up";
 }
@@ -1173,6 +1205,7 @@ function toggleCarExit() {
       return;
     }
     state.onFoot = true;
+    state.doorMotionStart = state.time;
     car.userData.speed = 0;
     car.userData.velocity.set(0, 0, 0);
     const exitPoint = new THREE.Vector3(2.1, 0, -0.15);
@@ -1193,6 +1226,7 @@ function toggleCarExit() {
     return;
   }
   state.onFoot = false;
+  state.doorMotionStart = state.time;
   person.userData.velocity.set(0, 0, 0);
   person.userData.speed = 0;
   person.userData.steer = 0;
@@ -2858,12 +2892,15 @@ function restartCity() {
   state.securitySelected = null;
   state.securityFeedCursor = 0;
   state.greenBlockTimer = 0;
+  state.doorMotionStart = -10;
   state.crashLook.active = false;
   state.crashLook.yaw = 0;
   state.crashLook.pitch = 0;
   for (const person of npcPedestrians) {
     person.userData.fallenUntil = 0;
+    person.userData.fallStart = -1;
     person.rotation.x = 0;
+    person.rotation.z = 0;
     person.position.y = 0;
   }
   city.rotation.y = 0;

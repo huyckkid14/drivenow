@@ -21,9 +21,11 @@ A static Three.js mini city driving game for GitHub Pages.
 - Engine voices peak at about 80% of the horn's reference volume, with distance attenuation and master compression for dense traffic.
 - Hold Up and Down together while stopped to rev the player engine and produce exhaust smoke.
 - Press C while stopped to smoothly open the door and exit; on foot, Up/Down walk forward or backward and Left/Right steer just like driving. Press C near the blue car beacon to get back in; traffic yields to pedestrians and the chase-camera framing stays consistent.
+- Each C entry or exit plays a complete driver-door opening, brief hold, and closing motion instead of leaving the door open.
 - A blue player-only gate at the east end of the center road leads to a huge oval racing circuit for high-speed driving; traffic bots remain confined to the city. Hold Space while moving and steering to handbrake-drift with reduced rear grip, lateral momentum, and tire smoke.
 - The player starts on the racing circuit's lower straight and returns there after restarting.
 - Fifty animated pedestrian NPCs keep roughly two walkers assigned to every intersection. They patrol short local routes, stop at non-green crossings, cannot pass through vehicle bodies, and traffic yields to them. A pedestrian struck by the player car collapses, then gets back up after five seconds.
+- Hit pedestrians lose balance and fall over through a smooth 0.72-second body-and-limb animation rather than snapping flat instantly.
 - Traffic cars engage reverse gear without turning around when a pedestrian enters their close safety zone; queued cars propagate the backward maneuver so the front car is not trapped.
 - A pedestrian-only SECURITY CAMERA ROOM beside the race entrance is entered with C while near its door. Its 5×5 monitor wall shows live views from all 25 intersection cameras simultaneously; press C again to exit.
 - Security-feed viewports use renderer display dimensions so all 25 feeds fit correctly on high-DPI screens and the normal camera viewport is restored cleanly on exit.
