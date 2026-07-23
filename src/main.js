@@ -1068,8 +1068,8 @@ function updateCarDoor(dt) {
   if (elapsed >= 1.5) state.carTransition = null;
 }
 
-function carDoorwayPoint(x) {
-  const point = new THREE.Vector3(x, 0, -0.15);
+function carDoorwayPoint(x, z = -0.72) {
+  const point = new THREE.Vector3(x, 0, z);
   state.player.localToWorld(point);
   return point;
 }
@@ -1079,7 +1079,7 @@ function beginCarStep(transition) {
   const person = state.pedestrian;
   transition.started = true;
   transition.innerPoint = carDoorwayPoint(0.72);
-  transition.outerPoint = carDoorwayPoint(2.1);
+  transition.outerPoint = carDoorwayPoint(2.15);
   if (transition.type === "exit") {
     state.onFoot = true;
     person.position.copy(transition.innerPoint);
@@ -1088,17 +1088,24 @@ function beginCarStep(transition) {
     state.carBeacon.visible = true;
     statusEl.textContent = "Stepping out…";
   } else {
-    transition.outerPoint.copy(transition.from);
     statusEl.textContent = "Stepping into car…";
   }
 }
 
 function animateCarStep(transition, progress) {
   const person = state.pedestrian;
-  const eased = progress * progress * (3 - 2 * progress);
-  const from = transition.type === "exit" ? transition.innerPoint : transition.outerPoint;
-  const to = transition.type === "exit" ? transition.outerPoint : transition.innerPoint;
-  person.position.lerpVectors(from, to, eased);
+  if (transition.type === "exit") {
+    const eased = progress * progress * (3 - 2 * progress);
+    person.position.lerpVectors(transition.innerPoint, transition.outerPoint, eased);
+  } else if (progress < 0.42) {
+    const approach = progress / 0.42;
+    const eased = approach * approach * (3 - 2 * approach);
+    person.position.lerpVectors(transition.from, transition.outerPoint, eased);
+  } else {
+    const entry = (progress - 0.42) / 0.58;
+    const eased = entry * entry * (3 - 2 * entry);
+    person.position.lerpVectors(transition.outerPoint, transition.innerPoint, eased);
+  }
   person.position.y += Math.sin(progress * Math.PI) * 0.12;
   const stride = Math.sin(progress * Math.PI * 2) * 0.48;
   person.userData.leftLeg.rotation.x = stride;
