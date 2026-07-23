@@ -42,6 +42,35 @@ canvas {
   backdrop-filter: blur(10px);
 }
 
+body.security-view #hud {
+  top: auto;
+  bottom: 10px;
+  left: 50%;
+  max-width: calc(100vw - 20px);
+  padding: 5px 8px;
+  transform: translateX(-50%);
+  border-color: rgba(89, 217, 255, 0.38);
+  background: rgba(7, 16, 22, 0.52);
+  box-shadow: none;
+  pointer-events: none;
+}
+
+body.security-view #hud > .brand,
+body.security-view #hud > .controls,
+body.security-view #hud > .range-control,
+body.security-view #speed,
+body.security-view #signal {
+  display: none;
+}
+
+body.security-view #status {
+  min-width: 0;
+  padding: 3px 7px;
+  background: transparent;
+  color: #dff9ff;
+  font-size: 11px;
+}
+
 .controls {
   display: flex;
   gap: 6px;
@@ -63,6 +92,27 @@ canvas {
 .controls button.active {
   background: #ffcc33;
   color: #171713;
+}
+
+.range-control {
+  display: grid;
+  grid-template-columns: auto minmax(90px, 150px) 64px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.range-control input {
+  width: 100%;
+  accent-color: #ffcc33;
+  cursor: pointer;
+}
+
+.range-control output {
+  color: #ffdc69;
+  text-align: right;
 }
 
 .brand {
@@ -125,6 +175,11 @@ canvas {
 
   .controls {
     flex-wrap: wrap;
+  }
+
+  .range-control {
+    grid-template-columns: auto minmax(110px, 1fr) 64px;
+    width: 100%;
   }
 
   .readout span {

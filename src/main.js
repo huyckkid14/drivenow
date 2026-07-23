@@ -11,6 +11,10 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
+const securityMonitorScene = new THREE.Scene();
+securityMonitorScene.background = new THREE.Color(0x071016);
+const securityMonitorCamera = new THREE.OrthographicCamera(-2.5, 2.5, 2.5, -2.5, 0.1, 20);
+securityMonitorCamera.position.z = 5;
 
 const speedEl = document.querySelector("#speed");
 const signalEl = document.querySelector("#signal");
@@ -34,6 +38,7 @@ const collidableCars = [];
 const damagePieces = [];
 const exhaustSmoke = [];
 const npcPedestrians = [];
+const securityCameras = [];
 const buildingObstacles = [];
 const botSpawnCandidates = [];
 const botEntryCandidates = [];
@@ -65,6 +70,8 @@ const SIGNAL_ALL_RED_TIME = 2;
 const HONK_COOLDOWN = 1.2;
 const ANGRY_HONK_COOLDOWN = 0.62;
 const DANGER_HONK_COOLDOWN = 0.28;
+const SEVERE_HONK_COOLDOWN = 1.55;
+const WRONG_WAY_HONK_COOLDOWN = 1.7;
 const COLLISION_BROAD_PHASE = 5.3;
 const BUILDING_BOUNCE = 0.18;
 const CRASH_FRICTION = 4.8;
@@ -83,6 +90,7 @@ const ENGINE_VOLUME = 2.14;
 const REV_SMOKE_INTERVAL = 0.055;
 const TRAFFIC_CYCLE = (SIGNAL_GREEN_TIME + SIGNAL_YELLOW_TIME + SIGNAL_ALL_RED_TIME) * 2;
 const PLAYER_START = new THREE.Vector3(RACE_CENTER_X, 0, 35);
+const SECURITY_ROOM_ENTRY = new THREE.Vector3(72, 0, 9.7);
 
 const state = {
   crashed: false,
@@ -98,6 +106,9 @@ const state = {
   trafficDensity: 1,
   trafficInitialized: false,
   onFoot: false,
+  securityRoom: false,
+  securitySelected: null,
+  securityFeedCursor: 0,
   crashLook: {
     active: false,
     lastX: 0,
@@ -146,7 +157,9 @@ function init() {
   createRoads();
   createRacingArea();
   createBlocks();
+  createSecurityCameraRoom();
   createTrafficLights();
+  createIntersectionSecurityCameras();
   createPlayer();
   createPedestrian();
   createNpcPedestrians();
@@ -389,6 +402,115 @@ function createTrafficLights() {
         trafficLights.push(light);
       }
     }
+  }
+}
+
+function createSecurityCameraRoom() {
+  const wall = new THREE.MeshStandardMaterial({ color: 0x26323b, roughness: 0.58, metalness: 0.12 });
+  const building = new THREE.Mesh(new THREE.BoxGeometry(14, 7, 12), wall);
+  building.position.set(72, 3.5, 17);
+  building.castShadow = true;
+  building.receiveShadow = true;
+  buildings.add(building);
+  buildingObstacles.push({ x: 72, z: 17, halfX: 7.1, halfZ: 6.1 });
+
+  const door = new THREE.Mesh(
+    new THREE.BoxGeometry(2.4, 3.4, 0.2),
+    new THREE.MeshStandardMaterial({ color: 0x10171c, metalness: 0.72, roughness: 0.28 }),
+  );
+  door.position.set(72, 1.7, 10.92);
+  buildings.add(door);
+
+  const signCanvas = document.createElement("canvas");
+  signCanvas.width = 1024;
+  signCanvas.height = 160;
+  const context = signCanvas.getContext("2d");
+  context.fillStyle = "#101820";
+  context.fillRect(0, 0, signCanvas.width, signCanvas.height);
+  context.strokeStyle = "#59d9ff";
+  context.lineWidth = 12;
+  context.strokeRect(6, 6, signCanvas.width - 12, signCanvas.height - 12);
+  context.fillStyle = "#e9fbff";
+  context.font = "bold 62px sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText("SECURITY CAMERA ROOM", 512, 82);
+  const sign = new THREE.Mesh(
+    new THREE.PlaneGeometry(13, 2.05),
+    new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(signCanvas) }),
+  );
+  sign.position.set(72, 5.35, 10.88);
+  buildings.add(sign);
+
+  const beacon = new THREE.PointLight(0x4dd9ff, 18, 12);
+  beacon.position.set(72, 3.8, 9.6);
+  buildings.add(beacon);
+}
+
+function createIntersectionSecurityCameras() {
+  const poleMaterial = new THREE.MeshStandardMaterial({ color: 0x3b464b, metalness: 0.55, roughness: 0.38 });
+  const cameraMaterial = new THREE.MeshStandardMaterial({ color: 0xe8edf0, metalness: 0.25, roughness: 0.42 });
+  for (const x of GRID) {
+    for (const z of GRID) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 6.5, 10), poleMaterial);
+      pole.position.set(x + 7.5, 3.25, z + 7.5);
+      city.add(pole);
+      const oppositePole = pole.clone();
+      oppositePole.position.set(x - 7.5, 3.25, z - 7.5);
+      city.add(oppositePole);
+      const housing = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.48, 1.15), cameraMaterial);
+      housing.position.set(x + 7.5, 6.45, z + 7.1);
+      housing.rotation.x = -0.24;
+      city.add(housing);
+      const lens = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.17, 0.17, 0.16, 12),
+        new THREE.MeshBasicMaterial({ color: 0x071018 }),
+      );
+      lens.rotation.x = Math.PI / 2;
+      lens.position.set(x + 7.5, 6.36, z + 6.48);
+      city.add(lens);
+
+      const oppositeHousing = housing.clone();
+      oppositeHousing.position.set(x - 7.5, 6.45, z - 7.1);
+      oppositeHousing.rotation.y = Math.PI;
+      city.add(oppositeHousing);
+      const oppositeLens = lens.clone();
+      oppositeLens.position.set(x - 7.5, 6.36, z - 6.48);
+      city.add(oppositeLens);
+      const recordingLight = new THREE.Mesh(
+        new THREE.SphereGeometry(0.1, 8, 6),
+        new THREE.MeshBasicMaterial({ color: 0xff2c2c }),
+      );
+      recordingLight.position.set(x + 7.77, 6.58, z + 6.68);
+      city.add(recordingLight);
+
+      const view = new THREE.PerspectiveCamera(62, 1, 0.1, 260);
+      view.position.set(x + 7.5, 6.35, z + 7.1);
+      view.lookAt(x, 0.5, z);
+      const target = new THREE.WebGLRenderTarget(320, 180, {
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        depthBuffer: true,
+      });
+      securityCameras.push({ x, z, view, target, monitor: null });
+    }
+  }
+  createSecurityMonitorWall();
+}
+
+function createSecurityMonitorWall() {
+  for (let i = 0; i < securityCameras.length; i++) {
+    const feed = securityCameras[i];
+    const column = i % 5;
+    const row = Math.floor(i / 5);
+    const monitor = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.96, 0.96),
+      new THREE.MeshBasicMaterial({ map: feed.target.texture }),
+    );
+    monitor.position.set(column - 2, 2 - row, 0);
+    monitor.userData.gridPosition = monitor.position.clone();
+    securityMonitorScene.add(monitor);
+    feed.monitor = monitor;
   }
 }
 
@@ -753,7 +875,43 @@ function animate() {
   updateSignals(dt);
   updateCamera(dt);
   updateHud();
-  renderer.render(scene, camera);
+  if (state.securityRoom) renderSecurityFeeds();
+  else renderer.render(scene, camera);
+}
+
+function renderSecurityFeeds() {
+  const displaySize = renderer.getSize(new THREE.Vector2());
+  const width = displaySize.x;
+  const height = displaySize.y;
+  const selected = state.securitySelected;
+  const captures = selected === null
+    ? [state.securityFeedCursor, (state.securityFeedCursor + 1) % securityCameras.length]
+    : [selected];
+  const shadowUpdates = renderer.shadowMap.autoUpdate;
+  renderer.shadowMap.autoUpdate = false;
+  for (const index of captures) {
+    const feed = securityCameras[index];
+    feed.view.aspect = 16 / 9;
+    feed.view.updateProjectionMatrix();
+    renderer.setRenderTarget(feed.target);
+    renderer.clear();
+    renderer.render(scene, feed.view);
+  }
+  renderer.shadowMap.autoUpdate = shadowUpdates;
+  state.securityFeedCursor = (state.securityFeedCursor + captures.length) % securityCameras.length;
+
+  for (let i = 0; i < securityCameras.length; i++) {
+    const monitor = securityCameras[i].monitor;
+    const highlighted = selected === i;
+    monitor.visible = selected === null || highlighted;
+    monitor.position.copy(highlighted ? new THREE.Vector3(0, 0, 0) : monitor.userData.gridPosition);
+    monitor.scale.setScalar(highlighted ? 5 : 1);
+  }
+  renderer.setRenderTarget(null);
+  renderer.setScissorTest(false);
+  renderer.setScissor(0, 0, width, height);
+  renderer.setViewport(0, 0, width, height);
+  renderer.render(securityMonitorScene, securityMonitorCamera);
 }
 
 function updateTrafficLights() {
@@ -846,7 +1004,7 @@ function updatePlayer(dt) {
 
 function updatePedestrian(dt) {
   const person = state.pedestrian;
-  if (!person || !state.onFoot) return;
+  if (!person || !state.onFoot || state.securityRoom) return;
   const data = person.userData;
   const moveInput = (keys.has("arrowup") ? 1 : 0) - (keys.has("arrowdown") ? 1 : 0);
   const steerInput = (keys.has("arrowleft") ? 1 : 0) - (keys.has("arrowright") ? 1 : 0);
@@ -990,7 +1148,25 @@ function resolvePedestrianBuildings(person, previous) {
 function toggleCarExit() {
   const car = state.player;
   const person = state.pedestrian;
-  if (!car || !person || car.userData.crashed || car.userData.immobilized) return;
+  if (!car || !person) return;
+  if (state.securityRoom) {
+    state.securityRoom = false;
+    state.securitySelected = null;
+    person.visible = true;
+    person.position.copy(SECURITY_ROOM_ENTRY);
+    statusEl.textContent = "Exited security camera room";
+    return;
+  }
+  if (state.onFoot && person.position.distanceTo(SECURITY_ROOM_ENTRY) <= 4.2) {
+    state.securityRoom = true;
+    state.securitySelected = null;
+    state.securityFeedCursor = 0;
+    person.userData.velocity.set(0, 0, 0);
+    person.userData.speed = 0;
+    person.visible = false;
+    statusEl.textContent = "Security feeds — C to exit";
+    return;
+  }
   if (!state.onFoot) {
     if (Math.abs(car.userData.speed) > 0.35) {
       statusEl.textContent = "Stop the car before getting out";
@@ -1010,6 +1186,10 @@ function toggleCarExit() {
   }
   if (person.position.distanceTo(car.position) > 3.3) {
     statusEl.textContent = "Move closer to your car to get in";
+    return;
+  }
+  if (car.userData.crashed || car.userData.immobilized) {
+    statusEl.textContent = "The car is wrecked — continue on foot or restart";
     return;
   }
   state.onFoot = false;
@@ -1068,13 +1248,52 @@ function updateBots(dt) {
     bot.rotation.y = lerpAngle(bot.rotation.y, targetYaw, dt * (avoidance ? 10 : 7));
     const travelSpeed = reversing ? Math.min(Math.abs(data.speed), avoidance.speed) : Math.abs(data.speed);
     data.velocity.copy(travel).multiplyScalar(travelSpeed);
-    bot.position.addScaledVector(data.velocity, dt);
+    const candidate = bot.position.clone().addScaledVector(data.velocity, dt);
+    if (botMovementBlocked(bot, candidate)) {
+      data.speed = 0;
+      data.velocity.set(0, 0, 0);
+      data.braking = true;
+    } else {
+      bot.position.copy(candidate);
+    }
     if (intersectionStop && !avoidance) {
       alignWithStopLine(bot, intersectionStop, dt, previous, !frontTraffic && !boxStop);
     }
     if (avoidance) resolveBuildingCollisions(bot, previous);
     wrapBot(bot);
   }
+}
+
+function botMovementBlocked(bot, candidate) {
+  const forward = getForward(bot).normalize();
+  const right = new THREE.Vector3(forward.z, 0, -forward.x);
+  const candidateBox = {
+    center: candidate,
+    forward,
+    right,
+    halfWidth: CAR_HALF_WIDTH + 0.08,
+    halfLength: CAR_HALF_LENGTH + BOT_BUMPER_GAP * 0.5,
+  };
+  for (const other of collidableCars) {
+    if (other === bot || !other.visible || other.userData.waitingForEntry) continue;
+    const maxDistance = CAR_HALF_LENGTH * 2 + BOT_BUMPER_GAP + 0.8;
+    if (candidate.distanceToSquared(other.position) > maxDistance * maxDistance) continue;
+    const otherBox = carBox(other);
+    otherBox.halfWidth += 0.08;
+    otherBox.halfLength += BOT_BUMPER_GAP * 0.5;
+    const axes = [candidateBox.right, candidateBox.forward, otherBox.right, otherBox.forward];
+    let overlaps = true;
+    for (const axis of axes) {
+      const a = projectBox(candidateBox, axis);
+      const b = projectBox(otherBox, axis);
+      if (Math.min(a.max, b.max) - Math.max(a.min, b.min) <= 0) {
+        overlaps = false;
+        break;
+      }
+    }
+    if (overlaps) return true;
+  }
+  return false;
 }
 
 function updateBotSensitivity() {
@@ -1467,13 +1686,17 @@ function updateDriverReactions(dt) {
   }
 
   if (signal && signal.light.state !== "green" && signal.along < -CAR_HALF_LENGTH * 0.45) {
-    requestNearbyHonk("angry", 24);
+    const conflictingBot = findConflictingIntersectionBot(signal);
+    if (conflictingBot) requestHonk(conflictingBot, "severe");
   }
 
   const reversingTarget = findBotInReversePath(8.5);
   if (reversingTarget && !isWaitingAtRedLight(reversingTarget)) {
-    requestHonk(reversingTarget, "danger");
+    requestHonk(reversingTarget, "severe");
   }
+
+  const wrongWayWitness = findWrongWayWitness();
+  if (wrongWayWitness) requestHonk(wrongWayWitness, "wrongWay");
 
   for (const bot of cars) {
     const botData = bot.userData;
@@ -1527,7 +1750,39 @@ function playerSignalInfo() {
   const laneAligned = axis === "ew" ? Math.abs(player.position.z - iz) < ROAD_HALF : Math.abs(player.position.x - ix) < ROAD_HALF;
   if (!laneAligned) return null;
   const light = trafficLights.find((item) => item.x === ix && item.z === iz && item.axis === axis);
-  return light ? { light, dir, along } : null;
+  return light ? { light, dir, axis, along, ix, iz } : null;
+}
+
+function findConflictingIntersectionBot(signal) {
+  const center = new THREE.Vector3(signal.ix, 0, signal.iz);
+  let best = null;
+  let bestArrival = Infinity;
+
+  for (const bot of cars) {
+    const data = bot.userData;
+    if (data.player || data.immobilized || data.crashed || Math.abs(data.speed || 0) < 0.8) continue;
+    const botAxis = data.dir === "east" || data.dir === "west" ? "ew" : "ns";
+    if (botAxis === signal.axis) continue;
+
+    const forward = dirs[data.dir];
+    const toCenter = center.clone().sub(bot.position);
+    const ahead = toCenter.dot(forward);
+    const lateralSq = Math.max(0, toCenter.lengthSq() - ahead * ahead);
+    if (lateralSq > (ROAD_HALF - 0.5) ** 2) continue;
+
+    const insideIntersection = Math.abs(ahead) <= ROAD_HALF + CAR_HALF_LENGTH;
+    const arrivingSoon = ahead > ROAD_HALF && ahead <= Math.max(13, Math.abs(data.speed) * 2.1);
+    if (!insideIntersection && !arrivingSoon) continue;
+    if (!insideIntersection && stopInfoForSignal(bot)) continue;
+
+    const arrival = insideIntersection ? 0 : ahead / Math.max(0.8, Math.abs(data.speed));
+    if (arrival < bestArrival) {
+      best = bot;
+      bestArrival = arrival;
+    }
+  }
+
+  return best;
 }
 
 function findBotBehindPlayer(distance) {
@@ -1580,6 +1835,50 @@ function findBotInReversePath(distance) {
   return closest;
 }
 
+function findWrongWayWitness() {
+  const player = state.player;
+  const data = player.userData;
+  if (data.speed < 2 || state.onFoot) return null;
+
+  const nearestX = nearestGrid(player.position.x);
+  const nearestZ = nearestGrid(player.position.z);
+  const xOffset = player.position.x - nearestX;
+  const zOffset = player.position.z - nearestZ;
+  const onHorizontal = Math.abs(zOffset) < ROAD_HALF && Math.abs(xOffset) > ROAD_HALF + CAR_HALF_LENGTH;
+  const onVertical = Math.abs(xOffset) < ROAD_HALF && Math.abs(zOffset) > ROAD_HALF + CAR_HALF_LENGTH;
+  if (!onHorizontal && !onVertical) return null;
+
+  let expectedDir;
+  let laneOffset;
+  if (onHorizontal) {
+    expectedDir = zOffset > 0 ? "east" : "west";
+    laneOffset = Math.abs(Math.abs(zOffset) - Math.abs(LANES[0]));
+  } else {
+    expectedDir = xOffset < 0 ? "north" : "south";
+    laneOffset = Math.abs(Math.abs(xOffset) - Math.abs(LANES[0]));
+  }
+  if (laneOffset > CAR_HALF_WIDTH + 0.75) return null;
+  if (getForward(player).dot(dirs[expectedDir]) > -0.35) return null;
+
+  const expectedForward = dirs[expectedDir];
+  let closest = null;
+  let closestAhead = Infinity;
+  for (const bot of cars) {
+    const botData = bot.userData;
+    if (botData.player || botData.immobilized || botData.crashed || botData.dir !== expectedDir) continue;
+    const delta = player.position.clone().sub(bot.position);
+    const ahead = delta.dot(expectedForward);
+    if (ahead < 0.5 || ahead > 30) continue;
+    const sideSq = Math.max(0, delta.lengthSq() - ahead * ahead);
+    if (sideSq > 7.2) continue;
+    if (ahead < closestAhead) {
+      closest = bot;
+      closestAhead = ahead;
+    }
+  }
+  return closest;
+}
+
 function requestNearbyHonk(kind, distance) {
   const player = state.player;
   let closest = null;
@@ -1596,8 +1895,8 @@ function requestNearbyHonk(kind, distance) {
 
 function requestHonk(car, kind = "short") {
   const data = car.userData;
-  const cooldown = kind === "danger" ? DANGER_HONK_COOLDOWN : kind === "angry" ? ANGRY_HONK_COOLDOWN : HONK_COOLDOWN;
-  const globalCooldown = kind === "danger" ? 0.13 : kind === "angry" ? 0.24 : 0.34;
+  const cooldown = kind === "wrongWay" ? WRONG_WAY_HONK_COOLDOWN : kind === "severe" ? SEVERE_HONK_COOLDOWN : kind === "danger" ? DANGER_HONK_COOLDOWN : kind === "angry" ? ANGRY_HONK_COOLDOWN : HONK_COOLDOWN;
+  const globalCooldown = kind === "wrongWay" ? 1.2 : kind === "severe" ? 1.05 : kind === "danger" ? 0.13 : kind === "angry" ? 0.24 : 0.34;
   if (state.time - data.lastHonk < cooldown) return;
   if (state.time - state.lastHonkSound < globalCooldown) return;
   data.lastHonk = state.time;
@@ -1634,8 +1933,43 @@ function updateCollisions(dt) {
       if (a.position.distanceTo(b.position) > COLLISION_BROAD_PHASE) continue;
       const hit = carCollision(a, b);
       if (!hit) continue;
+      if (!a.userData.player && !b.userData.player) {
+        if (a.userData.crashed || b.userData.crashed) {
+          applyCrashImpulse(a, b, dt, hit);
+          continue;
+        }
+        resolveBotContact(a, b, hit);
+        continue;
+      }
       applyCrashImpulse(a, b, dt, hit);
     }
+  }
+}
+
+function resolveBotContact(a, b, hit) {
+  const impactSpeed = carVelocity(a).sub(carVelocity(b)).length();
+  if (impactSpeed > 0.7) playCrashSound(THREE.MathUtils.clamp(impactSpeed / 18, 0.18, 0.78));
+  const normal = hit.normal.clone();
+  const correction = hit.depth * 0.5 + 0.08;
+  a.position.addScaledVector(normal, correction);
+  b.position.addScaledVector(normal, -correction);
+
+  const sameDirection = a.userData.dir === b.userData.dir;
+  if (sameDirection) {
+    const forward = dirs[a.userData.dir];
+    const aAhead = b.position.clone().sub(a.position).dot(forward) > 0;
+    const trailing = aAhead ? a : b;
+    const leading = aAhead ? b : a;
+    trailing.userData.speed = Math.min(trailing.userData.speed, Math.max(0, leading.userData.speed - 0.8));
+    trailing.userData.velocity.set(0, 0, 0);
+    trailing.userData.braking = true;
+  } else {
+    a.userData.speed = 0;
+    b.userData.speed = 0;
+    a.userData.velocity.set(0, 0, 0);
+    b.userData.velocity.set(0, 0, 0);
+    a.userData.braking = true;
+    b.userData.braking = true;
   }
 }
 
@@ -2112,6 +2446,7 @@ function updateCamera(dt) {
 }
 
 function updateHud() {
+  document.body.classList.toggle("security-view", state.securityRoom);
   const speed = Math.round(Math.abs(state.player.userData.speed) * 2.237);
   speedEl.textContent = `${speed} mph`;
   if (state.hazard || state.player.userData.hazard) signalEl.textContent = "Hazards";
@@ -2121,9 +2456,15 @@ function updateHud() {
   leftSignalBtn.classList.toggle("active", !state.hazard && state.signal === "left");
   rightSignalBtn.classList.toggle("active", !state.hazard && state.signal === "right");
   hazardsBtn.classList.toggle("active", state.hazard || state.player.userData.hazard);
-  if (state.onFoot) {
+  if (state.securityRoom) {
+    statusEl.textContent = state.securitySelected === null
+      ? `ALL ${securityCameras.length} SECURITY FEEDS — click one to enlarge — C to exit`
+      : `CAMERA ${state.securitySelected + 1} HIGHLIGHTED — Esc to view all — C to exit`;
+  } else if (state.onFoot) {
     const distance = state.pedestrian.position.distanceTo(state.player.position);
-    statusEl.textContent = distance <= 3.3 ? "Press C to get back in" : "On foot — follow the blue beacon to your car";
+    statusEl.textContent = state.player.userData.crashed || state.player.userData.immobilized
+      ? "Wrecked car — continue on foot or restart"
+      : distance <= 3.3 ? "Press C to get back in" : "On foot — follow the blue beacon to your car";
   } else if (!state.playerCrashed) {
     statusEl.textContent = state.crashed ? "Crash in city" : "City clear";
   }
@@ -2134,17 +2475,23 @@ function onKeyDown(event) {
   if (!key) return;
   ensureAudio();
   keys.add(key);
-  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "space", "q", "e", "z", "c"].includes(key)) {
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "space", "q", "e", "z", "c", "h"].includes(key)) {
     event.preventDefault();
     event.stopPropagation();
   }
-  if (event.repeat && ["q", "e", "z", "c"].includes(key)) return;
+  if (event.repeat && ["q", "e", "z", "c", "h"].includes(key)) return;
+  if (key === "escape" && state.securityRoom) {
+    state.securitySelected = null;
+    event.preventDefault();
+    return;
+  }
   if (state.toggleHeld.has(key)) return;
   if (key === "q") toggleSignal("left");
   if (key === "e") toggleSignal("right");
   if (key === "z") toggleHazards();
   if (key === "c") toggleCarExit();
-  if (["q", "e", "z", "c"].includes(key)) state.toggleHeld.add(key);
+  if (key === "h" && !state.onFoot && !state.securityRoom) startPlayerHorn();
+  if (["q", "e", "z", "c", "h"].includes(key)) state.toggleHeld.add(key);
 }
 
 function onKeyPress(event) {
@@ -2163,6 +2510,7 @@ function onKeyPress(event) {
 function onKeyUp(event) {
   const key = normalizeKey(event);
   if (!key) return;
+  if (key === "h") stopPlayerHorn();
   keys.delete(key);
   state.toggleHeld.delete(key);
 }
@@ -2170,7 +2518,15 @@ function onKeyUp(event) {
 function onPointerDown(event) {
   renderer.domElement.focus();
   ensureAudio();
-  if (!state.playerCrashed) return;
+  if (state.securityRoom) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    const column = THREE.MathUtils.clamp(Math.floor(((event.clientX - rect.left) / rect.width) * 5), 0, 4);
+    const row = THREE.MathUtils.clamp(Math.floor(((event.clientY - rect.top) / rect.height) * 5), 0, 4);
+    state.securitySelected = row * 5 + column;
+    event.preventDefault();
+    return;
+  }
+  if (!state.playerCrashed || state.onFoot) return;
   state.crashLook.active = true;
   state.crashLook.lastX = event.clientX;
   state.crashLook.lastY = event.clientY;
@@ -2203,7 +2559,9 @@ function normalizeKey(event) {
     KeyE: "e",
     KeyZ: "z",
     KeyC: "c",
+    KeyH: "h",
     Space: "space",
+    Escape: "escape",
   };
   if (byCode[event.code]) return byCode[event.code];
   return event.key ? event.key.toLowerCase() : "";
@@ -2384,13 +2742,15 @@ function playHonkSound(kind = "short") {
   if (!audio) return;
   if (audio.state === "suspended") audio.resume();
 
-  const angry = kind === "angry" || kind === "danger";
+  const wrongWay = kind === "wrongWay";
+  const severe = kind === "severe" || wrongWay;
+  const angry = kind === "angry" || kind === "danger" || severe;
   const danger = kind === "danger";
   const now = audio.currentTime;
   const bursts = danger ? 3 : 1;
   const burstGap = 0.16;
-  const duration = danger ? 0.11 : angry ? 0.42 : 0.22;
-  const baseGain = danger ? 0.18 : angry ? 0.22 : 0.15;
+  const duration = wrongWay ? 1.5 : severe ? 1.35 : danger ? 0.11 : angry ? 0.42 : 0.22;
+  const baseGain = severe ? 0.23 : danger ? 0.18 : angry ? 0.22 : 0.15;
 
   for (let i = 0; i < bursts; i++) {
     const start = now + i * burstGap;
@@ -2415,7 +2775,7 @@ function playHonkSound(kind = "short") {
     lowHorn.frequency.setValueAtTime(349.23, start);
     highHorn.frequency.setValueAtTime(440, start);
     growl.frequency.setValueAtTime(174.61, start);
-    if (angry) {
+    if (angry && !severe) {
       lowHorn.frequency.linearRampToValueAtTime(329.63, end);
       highHorn.frequency.linearRampToValueAtTime(415.3, end);
     }
@@ -2434,6 +2794,52 @@ function playHonkSound(kind = "short") {
   }
 }
 
+function startPlayerHorn() {
+  if (state.playerHorn) return;
+  const audio = ensureAudio();
+  if (!audio) return;
+  if (audio.state === "suspended") audio.resume();
+  const now = audio.currentTime;
+  const gain = audio.createGain();
+  const filter = audio.createBiquadFilter();
+  const lowHorn = audio.createOscillator();
+  const highHorn = audio.createOscillator();
+  const growl = audio.createOscillator();
+  filter.type = "bandpass";
+  filter.frequency.setValueAtTime(620, now);
+  filter.Q.setValueAtTime(1.15, now);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.15, now + 0.018);
+  lowHorn.type = "sawtooth";
+  highHorn.type = "sawtooth";
+  growl.type = "triangle";
+  lowHorn.frequency.setValueAtTime(349.23, now);
+  highHorn.frequency.setValueAtTime(440, now);
+  growl.frequency.setValueAtTime(174.61, now);
+  lowHorn.connect(filter);
+  highHorn.connect(filter);
+  growl.connect(filter);
+  filter.connect(gain);
+  gain.connect(audio.destination);
+  lowHorn.start(now);
+  highHorn.start(now);
+  growl.start(now);
+  state.playerHorn = { gain, lowHorn, highHorn, growl };
+}
+
+function stopPlayerHorn() {
+  const horn = state.playerHorn;
+  if (!horn || !state.audio) return;
+  const now = state.audio.currentTime;
+  horn.gain.gain.cancelScheduledValues(now);
+  horn.gain.gain.setValueAtTime(Math.max(0.0001, horn.gain.gain.value), now);
+  horn.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.07);
+  horn.lowHorn.stop(now + 0.08);
+  horn.highHorn.stop(now + 0.08);
+  horn.growl.stop(now + 0.08);
+  state.playerHorn = null;
+}
+
 function restartCity() {
   if (state.pedestrian) city.remove(state.pedestrian);
   if (state.carBeacon) city.remove(state.carBeacon);
@@ -2448,6 +2854,9 @@ function restartCity() {
   state.signal = "off";
   state.hazard = false;
   state.onFoot = false;
+  state.securityRoom = false;
+  state.securitySelected = null;
+  state.securityFeedCursor = 0;
   state.greenBlockTimer = 0;
   state.crashLook.active = false;
   state.crashLook.yaw = 0;

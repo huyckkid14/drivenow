@@ -25,6 +25,17 @@ A static Three.js mini city driving game for GitHub Pages.
 - The player starts on the racing circuit's lower straight and returns there after restarting.
 - Fifty animated pedestrian NPCs keep roughly two walkers assigned to every intersection. They patrol short local routes, stop at non-green crossings, cannot pass through vehicle bodies, and traffic yields to them. A pedestrian struck by the player car collapses, then gets back up after five seconds.
 - Traffic cars engage reverse gear without turning around when a pedestrian enters their close safety zone; queued cars propagate the backward maneuver so the front car is not trapped.
+- A pedestrian-only SECURITY CAMERA ROOM beside the race entrance is entered with C while near its door. Its 5×5 monitor wall shows live views from all 25 intersection cameras simultaneously; press C again to exit.
+- Security-feed viewports use renderer display dimensions so all 25 feeds fit correctly on high-DPI screens and the normal camera viewport is restored cleanly on exit.
+- Security footage is recorded into retained 320×180 camera frames, updating two cameras at a time instead of rendering all 25 every frame. Click a feed to enlarge and prioritize it; press Esc to restore the 5×5 wall.
+- In security mode, the full driving HUD collapses into a small translucent instruction strip at the bottom so it does not cover camera feeds.
+- Bot-to-bot overlap is resolved as recoverable traffic spacing, but impacts still play crash sounds scaled to relative collision speed. Full deformation and permanent crash physics remain reserved for collisions involving the player.
+- Bots now reject any proposed forward or reverse movement whose buffered oriented footprint would overlap another car, preventing contact before it happens. Every intersection has two clearly visible security camera heads on opposite corners and one dedicated live feed.
+- Hold H while inside the player car for a sustained horn. Its pitch remains constant and its duration exactly follows how long the key is held, with a short release fade.
+- Bot drivers use a long, steady severe-warning horn when the player reverses toward them or runs a red into traffic that is actively entering the conflicting path. Running an empty red light does not trigger a horn.
+- An oncoming bot gives a steady 1.5-second warning horn when the player drives forward against the direction of a normal city traffic lane. Intersections, reserved player lanes, and the racing circuit are excluded.
+- Player-caused crashes can propagate: a bot knocked into another bot transfers its impact, damage, slide, and spin to that vehicle. Ordinary low-speed bot traffic contact remains recoverable.
+- Press C after a player crash to exit the wreck and continue on foot without resetting. A wrecked or immobilized car cannot be re-entered, but the restart button remains available.
 - Bots continuously match the car ahead with a small bumper gap and slow to a controlled entry speed before every intersection.
 - Dense road positions are used only for initial population; replacement traffic enters exclusively from clear city-boundary lanes.
 - Off-map cars and vehicles in crossing or adjacent lanes are excluded from following and intersection-occupancy checks.
