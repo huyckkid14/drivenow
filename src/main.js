@@ -836,8 +836,8 @@ function makeCar(color, isPlayer) {
     car.add(marker);
 
     const door = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.68, 1.55), bodyMat.clone());
-    door.position.set(1.22, 0.72, -0.2);
-    door.geometry.translate(0, 0, 0.72);
+    door.position.set(1.22, 0.72, 0.55);
+    door.geometry.translate(0, 0, -0.72);
     car.add(door);
     car.userData.driverDoor = door;
   }
@@ -1051,24 +1051,24 @@ function updateCarDoor(dt) {
   if (!door) return;
   const elapsed = state.time - state.doorMotionStart;
   let target = 0;
-  if (elapsed >= 0 && elapsed < 0.98) target = 1.05;
-  const speed = target > 0 ? 3.2 : 2.25;
+  if (elapsed >= 0 && elapsed < 1.18) target = -1.05;
+  const speed = target < 0 ? 3.2 : 2.25;
   door.rotation.y = moveToward(door.rotation.y, target, dt * speed);
 
   const transition = state.carTransition;
   if (!transition) return;
   const stepStart = 0.34;
-  const stepEnd = 0.92;
+  const stepEnd = 1.12;
   if (elapsed >= stepStart) {
     if (!transition.started) beginCarStep(transition);
     const progress = THREE.MathUtils.clamp((elapsed - stepStart) / (stepEnd - stepStart), 0, 1);
     animateCarStep(transition, progress);
     if (!transition.finished && progress >= 1) finishCarStep(transition);
   }
-  if (elapsed >= 1.5) state.carTransition = null;
+  if (elapsed >= 1.7) state.carTransition = null;
 }
 
-function carDoorwayPoint(x, z = -0.72) {
+function carDoorwayPoint(x, z) {
   const point = new THREE.Vector3(x, 0, z);
   state.player.localToWorld(point);
   return point;
@@ -1078,11 +1078,13 @@ function beginCarStep(transition) {
   const car = state.player;
   const person = state.pedestrian;
   transition.started = true;
-  transition.innerPoint = carDoorwayPoint(0.72);
-  transition.outerPoint = carDoorwayPoint(2.15);
+  transition.seatPoint = carDoorwayPoint(0.72, 0.12);
+  transition.gapPoint = carDoorwayPoint(1.62, 0.08);
+  transition.edgePoint = carDoorwayPoint(2.86, -0.42);
+  transition.groundPoint = carDoorwayPoint(2.45, -1.1);
   if (transition.type === "exit") {
     state.onFoot = true;
-    person.position.copy(transition.innerPoint);
+    person.position.copy(transition.seatPoint);
     person.rotation.y = car.rotation.y;
     person.visible = true;
     state.carBeacon.visible = true;
@@ -1094,18 +1096,14 @@ function beginCarStep(transition) {
 
 function animateCarStep(transition, progress) {
   const person = state.pedestrian;
-  if (transition.type === "exit") {
-    const eased = progress * progress * (3 - 2 * progress);
-    person.position.lerpVectors(transition.innerPoint, transition.outerPoint, eased);
-  } else if (progress < 0.42) {
-    const approach = progress / 0.42;
-    const eased = approach * approach * (3 - 2 * approach);
-    person.position.lerpVectors(transition.from, transition.outerPoint, eased);
-  } else {
-    const entry = (progress - 0.42) / 0.58;
-    const eased = entry * entry * (3 - 2 * entry);
-    person.position.lerpVectors(transition.outerPoint, transition.innerPoint, eased);
-  }
+  const exitPoints = [transition.seatPoint, transition.gapPoint, transition.edgePoint, transition.groundPoint];
+  const entryPoints = [transition.from, transition.groundPoint, transition.edgePoint, transition.gapPoint, transition.seatPoint];
+  const points = transition.type === "exit" ? exitPoints : entryPoints;
+  const segmentFloat = progress * (points.length - 1);
+  const segment = Math.min(points.length - 2, Math.floor(segmentFloat));
+  const localProgress = segmentFloat - segment;
+  const eased = localProgress * localProgress * (3 - 2 * localProgress);
+  person.position.lerpVectors(points[segment], points[segment + 1], eased);
   person.position.y += Math.sin(progress * Math.PI) * 0.12;
   const stride = Math.sin(progress * Math.PI * 2) * 0.48;
   person.userData.leftLeg.rotation.x = stride;
@@ -1122,7 +1120,7 @@ function finishCarStep(transition) {
   person.userData.leftArm.rotation.x = 0;
   person.userData.rightArm.rotation.x = 0;
   if (transition.type === "exit") {
-    person.position.copy(transition.outerPoint);
+    person.position.copy(transition.groundPoint);
     statusEl.textContent = "On foot — follow the blue beacon back to your car";
     return;
   }
