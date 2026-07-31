@@ -38,6 +38,7 @@ const collidableCars = [];
 const damagePieces = [];
 const exhaustSmoke = [];
 const npcPedestrians = [];
+const crashResponders = [];
 const securityCameras = [];
 const buildingObstacles = [];
 const botSpawnCandidates = [];
@@ -104,6 +105,7 @@ const state = {
   greenBlockTimer: 0,
   doorMotionStart: -10,
   carTransition: null,
+  crashMeeting: null,
   botSensitivity: 0,
   trafficDensity: 1,
   trafficInitialized: false,
@@ -755,6 +757,7 @@ function spawnBot(start) {
     bodyColor: botColors[index % botColors.length],
     indicators: bot.userData.indicators,
     brakeLights: bot.userData.brakeLights,
+    driverDoor: bot.userData.driverDoor,
   };
   city.add(bot);
   cars.push(bot);
@@ -835,12 +838,13 @@ function makeCar(color, isPlayer) {
     marker.rotation.y = Math.PI;
     car.add(marker);
 
-    const door = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.68, 1.55), bodyMat.clone());
-    door.position.set(1.22, 0.72, 0.55);
-    door.geometry.translate(0, 0, -0.72);
-    car.add(door);
-    car.userData.driverDoor = door;
   }
+
+  const door = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.68, 1.55), bodyMat.clone());
+  door.position.set(1.22, 0.72, 0.55);
+  door.geometry.translate(0, 0, -0.72);
+  car.add(door);
+  car.userData.driverDoor = door;
 
   car.userData.indicators = indicators;
   car.userData.brakeLights = brakeLights;
@@ -879,6 +883,7 @@ function animate() {
   updatePedestrian(dt);
   updateNpcPedestrians(dt);
   updateCarDoor(dt);
+  updateCrashMeeting(dt);
   updateBots(dt);
   updateEngineSounds(dt);
   updateTrafficSpawns();
@@ -1414,6 +1419,9 @@ function getPedestrianYield(bot) {
   const stoppingRange = 5.5 + Math.abs(data.speed || 0) * 0.85;
   const people = npcPedestrians.filter((person) => person.userData.fallenUntil <= state.time);
   if (state.onFoot && state.pedestrian?.visible) people.push(state.pedestrian);
+  for (const responder of crashResponders) {
+    if (responder.person?.visible) people.push(responder.person);
+  }
   for (const person of people) {
     const delta = person.position.clone().sub(bot.position);
     const ahead = delta.dot(forward);
@@ -2106,9 +2114,302 @@ function applyCrashImpulse(a, b, dt, hit) {
   state.crashed = true;
   if (a.userData.player || b.userData.player) {
     state.playerCrashed = true;
+    ensureCrashMeeting(a, b);
+    registerCrashResponder(a.userData.player ? b : a);
     restartBtn.hidden = false;
     statusEl.textContent = "Crash - drag to spin";
+  } else if (state.playerCrashed && (a.userData.crashed || b.userData.crashed)) {
+    registerCrashResponder(a);
+    registerCrashResponder(b);
   }
+}
+
+function ensureCrashMeeting(a, b) {
+  if (state.crashMeeting) return;
+  const arrow = new THREE.Group();
+  const arrowMat = new THREE.MeshStandardMaterial({ color: 0xffd23f, emissive: 0xff8c00, emissiveIntensity: 0.85 });
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.72, 1.45, 12), arrowMat);
+  cone.rotation.z = Math.PI;
+  cone.position.y = 3.4;
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(1.25, 0.12, 8, 28),
+    new THREE.MeshStandardMaterial({ color: 0xffe58a, emissive: 0xffb000, emissiveIntensity: 0.65 }),
+  );
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.16;
+  arrow.add(cone, ring);
+  city.add(arrow);
+  state.crashMeeting = { point: a.position.clone().add(b.position).multiplyScalar(0.5), arrow, cars: new Set() };
+  updateCrashMeetingPoint();
+}
+
+function registerCrashResponder(car) {
+  if (!state.crashMeeting || !car || car.userData.player || state.crashMeeting.cars.has(car)) return;
+  state.crashMeeting.cars.add(car);
+  crashResponders.push({
+    car,
+    person: null,
+    exitAt: state.time + 1.1 + crashResponders.length * 0.14,
+    slot: crashResponders.length,
+  });
+  updateCrashMeetingPoint();
+}
+
+function updateCrashMeetingPoint() {
+  const meeting = state.crashMeeting;
+  if (!meeting) return;
+  const involved = [state.player, ...meeting.cars];
+  const center = involved.reduce((sum, car) => sum.add(car.position), new THREE.Vector3()).multiplyScalar(1 / involved.length);
+  const candidates = playerLaneMeetingCandidates(center);
+  meeting.point.copy(candidates.find(isClearCrashMeetingPoint) || candidates[0]);
+  meeting.point.y = 0;
+  meeting.arrow.position.copy(meeting.point);
+}
+
+function playerLaneMeetingCandidates(center) {
+  const candidates = [];
+  const samples = [0, 4, -4, 8, -8, 12, -12, 18, -18, 26, -26];
+  const clampRoad = (value) => THREE.MathUtils.clamp(value, -BOUNDS + 1.5, BOUNDS - 1.5);
+  for (const fixed of GRID) {
+    for (const side of [-1, 1]) {
+      for (const offset of samples) {
+        const horizontal = new THREE.Vector3(clampRoad(center.x + offset), 0, fixed + side * PLAYER_LANE_OFFSET);
+        const vertical = new THREE.Vector3(fixed + side * PLAYER_LANE_OFFSET, 0, clampRoad(center.z + offset));
+        if (Math.abs(horizontal.x - nearestGrid(horizontal.x)) > ROAD_HALF + 1.2) candidates.push(horizontal);
+        if (Math.abs(vertical.z - nearestGrid(vertical.z)) > ROAD_HALF + 1.2) candidates.push(vertical);
+      }
+    }
+  }
+  return candidates
+    .filter((point) => isPlayerOnlyLanePosition(point))
+    .sort((left, right) => left.distanceToSquared(center) - right.distanceToSquared(center));
+}
+
+function isClearCrashMeetingPoint(point) {
+  if (cars.some((car) => car.position.distanceToSquared(point) < 12.25)) return false;
+  return !buildingObstacles.some((obstacle) =>
+    Math.abs(point.x - obstacle.x) < obstacle.halfX + 1.2 && Math.abs(point.z - obstacle.z) < obstacle.halfZ + 1.2,
+  );
+}
+
+function updateCrashMeeting(dt) {
+  const meeting = state.crashMeeting;
+  if (!meeting) return;
+  if ([...meeting.cars].some((car) => !car.userData.immobilized)) updateCrashMeetingPoint();
+  meeting.arrow.position.y = 0.18 + Math.sin(state.time * 2.6) * 0.12;
+  meeting.arrow.rotation.y += dt * 0.75;
+
+  for (const responder of crashResponders) {
+    const car = responder.car;
+    const door = car.userData.driverDoor;
+    const readyToExit = state.time >= responder.exitAt && (car.userData.immobilized || car.userData.speed < 1.4 || state.time >= responder.exitAt + 2.4);
+    if (door) {
+      const doorTarget = responder.person ? 0 : readyToExit || state.time >= responder.exitAt - 0.55 ? -1.05 : 0;
+      door.rotation.y = moveToward(door.rotation.y, doorTarget, dt * (doorTarget ? 3 : 2.1));
+    }
+    if (!responder.person && readyToExit && (!door || door.rotation.y < -0.82)) spawnCrashResponder(responder);
+    if (!responder.person) continue;
+    const squeezing = cars.some((nearbyCar) => nearbyCar.position.distanceToSquared(responder.person.position) < 10.5);
+    responder.person.scale.x = moveToward(responder.person.scale.x, squeezing ? 0.72 : 1, dt * 3.5);
+
+    const angle = (responder.slot / Math.max(1, crashResponders.length)) * Math.PI * 2;
+    const target = meeting.point.clone().add(new THREE.Vector3(Math.cos(angle) * 1.45, 0, Math.sin(angle) * 1.45));
+    const forcingDirect = state.time < (responder.forceDirectUntil || 0);
+    const routeStale = !responder.plannedTarget || responder.plannedTarget.distanceToSquared(target) > 1.2;
+    const waypointBlocked = responder.route?.[responder.routeIndex] && isCrashRoutePointBlocked(responder.route[responder.routeIndex], responder.car);
+    if (!forcingDirect && (!responder.route || routeStale || waypointBlocked || state.time >= responder.replanAt)) {
+      responder.route = planCrashWalkingRoute(responder.person.position, target, responder.car);
+      responder.routeIndex = 0;
+      responder.plannedTarget = target.clone();
+      responder.replanAt = state.time + 1.25;
+    }
+    while (!forcingDirect && responder.routeIndex < responder.route.length - 1 && responder.person.position.distanceTo(responder.route[responder.routeIndex]) < 0.28) {
+      responder.routeIndex += 1;
+    }
+    const hasSafeRoute = !forcingDirect && responder.route.length > 0;
+    const waypoint = hasSafeRoute ? responder.route[responder.routeIndex] : target;
+    const delta = waypoint.clone().sub(responder.person.position);
+    const distance = delta.length();
+    if (distance < 0.12 && responder.person.position.distanceTo(target) < 0.3) {
+      setNpcWalkingPose(responder.person.userData, 0);
+      continue;
+    }
+    const step = Math.min(distance, dt * 2.15);
+    delta.normalize();
+    const next = responder.person.position.clone().addScaledVector(delta, step);
+    if (hasSafeRoute && isCrashRoutePointBlocked(next, responder.car)) {
+      responder.route = null;
+      responder.replanAt = 0;
+      responder.blockedSince ??= state.time;
+      if (state.time - responder.blockedSince < 0.32) continue;
+      responder.forceDirectUntil = state.time + 2.8;
+    }
+    responder.person.position.copy(next);
+    responder.blockedSince = null;
+    responder.person.rotation.y = Math.atan2(delta.x, delta.z);
+    responder.person.userData.gait += dt * 7;
+    setNpcWalkingPose(responder.person.userData, Math.sin(responder.person.userData.gait) * 0.58);
+  }
+}
+
+function spawnCrashResponder(responder) {
+  const person = makeNpcPedestrian(100 + responder.slot);
+  const exitPoint = new THREE.Vector3(2.3, 0, -0.35);
+  responder.car.localToWorld(exitPoint);
+  person.position.copy(exitPoint);
+  person.rotation.y = responder.car.rotation.y;
+  city.add(person);
+  responder.person = person;
+  responder.route = null;
+  responder.routeIndex = 0;
+  responder.plannedTarget = null;
+  responder.replanAt = 0;
+  responder.blockedSince = null;
+  responder.forceDirectUntil = 0;
+}
+
+function planCrashWalkingRoute(start, target, ownCar, padding = 6) {
+  if (segmentClearForCrashDriver(start, target, ownCar)) return [target.clone()];
+  const minX = Math.min(start.x, target.x) - padding;
+  const maxX = Math.max(start.x, target.x) + padding;
+  const minZ = Math.min(start.z, target.z) - padding;
+  const maxZ = Math.max(start.z, target.z) + padding;
+  const span = Math.max(maxX - minX, maxZ - minZ);
+  const gridStep = Math.max(0.46, span / 72);
+  const cols = Math.ceil((maxX - minX) / gridStep) + 1;
+  const rows = Math.ceil((maxZ - minZ) / gridStep) + 1;
+  const toKey = (x, z) => `${x},${z}`;
+  const toPoint = (x, z) => new THREE.Vector3(minX + x * gridStep, 0, minZ + z * gridStep);
+  const startCell = {
+    x: THREE.MathUtils.clamp(Math.round((start.x - minX) / gridStep), 0, cols - 1),
+    z: THREE.MathUtils.clamp(Math.round((start.z - minZ) / gridStep), 0, rows - 1),
+  };
+  const goalCell = {
+    x: THREE.MathUtils.clamp(Math.round((target.x - minX) / gridStep), 0, cols - 1),
+    z: THREE.MathUtils.clamp(Math.round((target.z - minZ) / gridStep), 0, rows - 1),
+  };
+  const startKey = toKey(startCell.x, startCell.z);
+  const goalKey = toKey(goalCell.x, goalCell.z);
+  const open = [{ ...startCell, g: 0, f: 0 }];
+  const costs = new Map([[startKey, 0]]);
+  const parents = new Map();
+  const closed = new Set();
+  const directions = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+
+  while (open.length) {
+    const current = popCrashRouteNode(open);
+    const currentKey = toKey(current.x, current.z);
+    if (closed.has(currentKey)) continue;
+    if (currentKey === goalKey) {
+      const cells = [];
+      let key = goalKey;
+      while (key && key !== startKey) {
+        const [x, z] = key.split(",").map(Number);
+        cells.push(toPoint(x, z));
+        key = parents.get(key);
+      }
+      cells.reverse();
+      cells.push(target.clone());
+      return simplifyCrashRoute(start, cells, ownCar);
+    }
+    closed.add(currentKey);
+
+    for (const [dx, dz] of directions) {
+      const x = current.x + dx;
+      const z = current.z + dz;
+      if (x < 0 || z < 0 || x >= cols || z >= rows) continue;
+      const key = toKey(x, z);
+      if (closed.has(key)) continue;
+      const point = toPoint(x, z);
+      if (key !== goalKey && isCrashRoutePointBlocked(point, ownCar)) continue;
+      if (dx && dz) {
+        if (isCrashRoutePointBlocked(toPoint(current.x + dx, current.z), ownCar)) continue;
+        if (isCrashRoutePointBlocked(toPoint(current.x, current.z + dz), ownCar)) continue;
+      }
+      const nextCost = current.g + (dx && dz ? 1.414 : 1);
+      if (nextCost >= (costs.get(key) ?? Infinity)) continue;
+      costs.set(key, nextCost);
+      parents.set(key, currentKey);
+      const heuristic = Math.hypot(goalCell.x - x, goalCell.z - z);
+      pushCrashRouteNode(open, { x, z, g: nextCost, f: nextCost + heuristic });
+    }
+  }
+  if (padding < 18) return planCrashWalkingRoute(start, target, ownCar, padding + 6);
+  return [];
+}
+
+function pushCrashRouteNode(heap, node) {
+  heap.push(node);
+  let index = heap.length - 1;
+  while (index > 0) {
+    const parent = Math.floor((index - 1) / 2);
+    if (heap[parent].f <= node.f) break;
+    heap[index] = heap[parent];
+    index = parent;
+  }
+  heap[index] = node;
+}
+
+function popCrashRouteNode(heap) {
+  const first = heap[0];
+  const last = heap.pop();
+  if (!heap.length) return first;
+  let index = 0;
+  while (true) {
+    const left = index * 2 + 1;
+    const right = left + 1;
+    if (left >= heap.length) break;
+    const child = right < heap.length && heap[right].f < heap[left].f ? right : left;
+    if (heap[child].f >= last.f) break;
+    heap[index] = heap[child];
+    index = child;
+  }
+  heap[index] = last;
+  return first;
+}
+
+function simplifyCrashRoute(start, route, ownCar) {
+  const simplified = [];
+  let anchor = start;
+  let index = 0;
+  while (index < route.length) {
+    let farthest = index;
+    for (let candidate = index; candidate < route.length; candidate++) {
+      if (!segmentClearForCrashDriver(anchor, route[candidate], ownCar)) break;
+      farthest = candidate;
+    }
+    simplified.push(route[farthest]);
+    anchor = route[farthest];
+    index = farthest + 1;
+  }
+  return simplified;
+}
+
+function segmentClearForCrashDriver(start, end, ownCar) {
+  const distance = start.distanceTo(end);
+  const samples = Math.max(1, Math.ceil(distance / 0.45));
+  for (let i = 1; i <= samples; i++) {
+    const point = start.clone().lerp(end, i / samples);
+    if (isCrashRoutePointBlocked(point, ownCar)) return false;
+  }
+  return true;
+}
+
+function isCrashRoutePointBlocked(point, ownCar) {
+  for (const car of cars) {
+    if (!car.visible || car.userData.waitingForEntry) continue;
+    const dx = point.x - car.position.x;
+    const dz = point.z - car.position.z;
+    if (Math.abs(dx) > 4 || Math.abs(dz) > 4) continue;
+    const sin = Math.sin(car.rotation.y);
+    const cos = Math.cos(car.rotation.y);
+    const side = dx * cos - dz * sin;
+    const along = dx * sin + dz * cos;
+    if (Math.abs(side) < CAR_HALF_WIDTH + 0.12 && Math.abs(along) < CAR_HALF_LENGTH - 0.12) return true;
+  }
+  return buildingObstacles.some((obstacle) =>
+    Math.abs(point.x - obstacle.x) < obstacle.halfX + 0.25 && Math.abs(point.z - obstacle.z) < obstacle.halfZ + 0.25,
+  );
 }
 
 function spawnCollisionDamage(car, hitNormal, impactVelocity, closingSpeed) {
@@ -2948,6 +3249,12 @@ function stopPlayerHorn() {
 function restartCity() {
   if (state.pedestrian) city.remove(state.pedestrian);
   if (state.carBeacon) city.remove(state.carBeacon);
+  if (state.crashMeeting?.arrow) city.remove(state.crashMeeting.arrow);
+  for (const responder of crashResponders) {
+    if (responder.person) city.remove(responder.person);
+  }
+  crashResponders.length = 0;
+  state.crashMeeting = null;
   for (const car of cars) {
     destroyEngineVoice(car);
     city.remove(car);

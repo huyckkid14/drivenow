@@ -37,6 +37,9 @@ A static Three.js mini city driving game for GitHub Pages.
 - Bot drivers use a long, steady severe-warning horn when the player reverses toward them or runs a red into traffic that is actively entering the conflicting path. Running an empty red light does not trigger a horn.
 - An oncoming bot gives a steady 1.5-second warning horn when the player drives forward against the direction of a normal city traffic lane. Intersections, reserved player lanes, and the racing circuit are excluded.
 - Player-caused crashes can propagate: a bot knocked into another bot transfers its impact, damage, slide, and spin to that vehicle. Ordinary low-speed bot traffic contact remains recoverable.
+- Player-caused multi-car crashes create one shared meeting point on the nearest uninterrupted player-only lane segment. A hovering arrow marks it, and every affected bot opens its door and exits after settling.
+- Crash drivers first use expanded path searches around their own car, other wrecks, and buildings. They switch to direct no-stop movement only when no route exists, while active bot traffic treats them as pedestrians and yields or reverses.
+- If a planned first step remains blocked for 0.32 seconds, the driver forcibly enters direct mode for 2.8 seconds, preventing an immobilized car from causing an endless re-planning loop.
 - Press C after a player crash to exit the wreck and continue on foot without resetting. A wrecked or immobilized car cannot be re-entered, but the restart button remains available.
 - Bots continuously match the car ahead with a small bumper gap and slow to a controlled entry speed before every intersection.
 - Dense road positions are used only for initial population; replacement traffic enters exclusively from clear city-boundary lanes.
