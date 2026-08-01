@@ -1635,7 +1635,7 @@ function updatePoliceMode(dt) {
     car.userData.speed = moveToward(car.userData.speed, Math.min(4, Math.max(0, car.userData.speed)), dt * 12);
     return;
   }
-  if (!isClearPolicePullOverPoint(stop.destination, car)) {
+  if (!stop.aligning && !isClearPolicePullOverPoint(stop.destination, car)) {
     const replacement = findPolicePullOverDestination(car, stop.roadYaw, stop.destination);
     if (replacement) {
       stop.destination.copy(replacement);
@@ -1647,14 +1647,27 @@ function updatePoliceMode(dt) {
       return;
     }
   }
-  const delta = stop.destination.clone().sub(car.position);
+  const finalDestination = stop.alignDestination || stop.destination;
+  const delta = finalDestination.clone().sub(car.position);
   const distance = delta.length();
-  if (distance <= 0.65) {
-    car.position.copy(stop.destination);
-    car.rotation.y = stop.roadYaw;
-    car.userData.speed = 0;
+  if (distance <= 0.8 || stop.aligning) {
+    if (!stop.alignDestination) stop.alignDestination = stop.destination.clone();
+    stop.aligning = true;
+    car.userData.speed = moveToward(car.userData.speed, 0, dt * 12);
     car.userData.velocity.set(0, 0, 0);
     car.userData.braking = true;
+    car.position.lerp(stop.alignDestination, Math.min(1, dt * 3));
+    car.rotation.y = lerpAngle(car.rotation.y, stop.roadYaw, Math.min(1, dt * 2.2));
+    const angleRemaining = Math.abs(Math.atan2(
+      Math.sin(stop.roadYaw - car.rotation.y),
+      Math.cos(stop.roadYaw - car.rotation.y),
+    ));
+    if (car.position.distanceTo(stop.alignDestination) > 0.06 || angleRemaining > 0.018) {
+      statusEl.textContent = "Target straightening smoothly in the player lane";
+      return;
+    }
+    car.position.copy(stop.alignDestination);
+    car.rotation.y = stop.roadYaw;
     stop.complete = true;
     revealPulledOverDriver(car);
     statusEl.textContent = "Vehicle pulled over — driver window lowered — press O to stop siren";
