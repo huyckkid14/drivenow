@@ -1797,17 +1797,8 @@ function endPoliceInterview() {
   stopPoliceSiren();
   if (target) {
     const data = target.userData;
-    const forward = dirs[data.dir] || getForward(target).normalize();
-    const destination = target.position.clone().addScaledVector(forward, 18);
-    if (data.dir === "east") destination.z = nearestGrid(target.position.z) + LANES[1];
-    if (data.dir === "west") destination.z = nearestGrid(target.position.z) + LANES[0];
-    if (data.dir === "north") destination.x = nearestGrid(target.position.x) + LANES[0];
-    if (data.dir === "south") destination.x = nearestGrid(target.position.x) + LANES[1];
-    const mergePoint = target.position.clone().addScaledVector(forward, 9);
-    if (data.dir === "east" || data.dir === "west") mergePoint.z = THREE.MathUtils.lerp(target.position.z, destination.z, 0.58);
-    else mergePoint.x = THREE.MathUtils.lerp(target.position.x, destination.x, 0.58);
     data.policePullOver = null;
-    data.policeRelease = { destination, mergePoint, phase: "merge", roadYaw: yawForDir(data.dir) };
+    data.policeRelease = createPoliceReleasePlan(target, 0);
     data.hazard = false;
     data.braking = false;
     data.speed = 0;
@@ -1987,6 +1978,22 @@ function updateBots(dt) {
 function updateReleasedPoliceTarget(bot, dt) {
   const data = bot.userData;
   const release = data.policeRelease;
+  if (release.phase === "reversing") {
+    const reverseVelocity = getForward(bot).normalize().multiplyScalar(-3.4);
+    const reverseCandidate = bot.position.clone().addScaledVector(reverseVelocity, dt);
+    data.speed = -3.4;
+    data.velocity.copy(reverseVelocity);
+    data.braking = false;
+    if (!botMovementBlocked(bot, reverseCandidate)) bot.position.copy(reverseCandidate);
+    if (state.time >= release.reverseUntil) {
+      const sharperPlan = createPoliceReleasePlan(bot, release.attempt + 1);
+      data.policeRelease = sharperPlan;
+      data.speed = 0;
+      data.velocity.set(0, 0, 0);
+    }
+    return;
+  }
+
   const targetPoint = release.phase === "merge" ? release.mergePoint : release.destination;
   const delta = targetPoint.clone().sub(bot.position);
   const distance = delta.length();
@@ -2021,11 +2028,47 @@ function updateReleasedPoliceTarget(bot, dt) {
   if (!botMovementBlocked(bot, candidate)) {
     bot.position.copy(candidate);
     data.braking = false;
+    release.blockedFor = 0;
   } else {
     data.speed = 0;
     data.velocity.set(0, 0, 0);
     data.braking = true;
+    const blockingTraffic = findNearestCarAhead(bot, 8);
+    const waitingForRed = isWaitingAtRedLight(bot) || Boolean(
+      blockingTraffic?.car && isWaitingAtRedLight(blockingTraffic.car),
+    );
+    release.blockedFor = waitingForRed ? 0 : release.blockedFor + dt;
+    if (!waitingForRed && release.blockedFor > 0.45) {
+      // Back straight out without changing the car's facing direction. The
+      // next attempt uses a shorter, sharper path toward the proper lane.
+      release.phase = "reversing";
+      release.reverseUntil = state.time + 1.15;
+      release.blockedFor = 0;
+    }
   }
+}
+
+function createPoliceReleasePlan(bot, attempt) {
+  const data = bot.userData;
+  const forward = dirs[data.dir] || getForward(bot).normalize();
+  const horizontal = data.dir === "east" || data.dir === "west";
+  const destination = bot.position.clone().addScaledVector(forward, Math.max(10, 14 - attempt * 1.5));
+  if (data.dir === "east") destination.z = nearestGrid(bot.position.z) + LANES[1];
+  if (data.dir === "west") destination.z = nearestGrid(bot.position.z) + LANES[0];
+  if (data.dir === "north") destination.x = nearestGrid(bot.position.x) + LANES[0];
+  if (data.dir === "south") destination.x = nearestGrid(bot.position.x) + LANES[1];
+  const mergePoint = bot.position.clone().addScaledVector(forward, Math.max(3.2, 5.2 - attempt * 0.5));
+  const laneBias = Math.min(0.88, 0.68 + attempt * 0.08);
+  if (horizontal) mergePoint.z = THREE.MathUtils.lerp(bot.position.z, destination.z, laneBias);
+  else mergePoint.x = THREE.MathUtils.lerp(bot.position.x, destination.x, laneBias);
+  return {
+    phase: "merge",
+    destination,
+    mergePoint,
+    roadYaw: yawForDir(data.dir),
+    blockedFor: 0,
+    attempt,
+  };
 }
 
 function getPoliceTrafficClearance(bot) {
