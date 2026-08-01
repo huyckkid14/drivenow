@@ -36,7 +36,7 @@
 - A completed police stop supports a close-up, branching driver conversation. Show no more than two context-sensitive choices at once, and only expose violations supported by the driver's response (for example, offer the no-insurance fine only when that driver fails to provide insurance).
 - When a traffic stop ends, the released bot must immediately steer back into its correct directional lane and straighten before resuming normal traffic. It must never merge into the oncoming lane or drive indefinitely along the player-only lane.
 - If a released bot is blocked for a non-signal reason, it may physically reverse without rotating and retry with stronger steering toward its lane. It must not reverse when it or the blocking vehicle is legitimately waiting at a red light; wait for green instead.
-- The police siren continues until the player presses the uppercase letter `O` (not zero).
+- The police siren continues until the player presses `O`.
 
 ## Controls to preserve
 
@@ -47,7 +47,7 @@
 - `C`: enter/exit cars and context interactions.
 - `H`: hold the horn.
 - `P`: toggle police mode.
-- Uppercase letter `O` (not zero): stop the police siren.
+- `O`: stop the police siren.
 - `1`: begin or end the close-up driver interaction after the selected vehicle has completed its pull-over.
 
 ## Git workflow
