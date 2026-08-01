@@ -25,6 +25,108 @@ canvas {
   height: 100%;
 }
 
+#introOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 18% 18%, rgba(255, 213, 77, 0.22), transparent 34%),
+    linear-gradient(135deg, #173f58, #15221c 58%, #0b1715);
+  transition: opacity 0.55s ease, transform 0.55s ease;
+}
+
+html[data-intro="seen"] #introOverlay,
+#introOverlay.finished {
+  display: none;
+}
+
+#introOverlay.leaving {
+  opacity: 0;
+  transform: scale(0.97);
+  pointer-events: none;
+}
+
+#introBrand { width: min(820px, 92vw); text-align: center; }
+.intro-logo-row { position: relative; display: flex; align-items: center; justify-content: center; height: 190px; }
+.intro-car {
+  position: absolute;
+  left: 50%;
+  width: clamp(110px, 16vw, 155px);
+  fill: #ffcc33;
+  stroke: #fff7d3;
+  stroke-width: 5;
+  stroke-linejoin: round;
+  opacity: 0;
+  filter: drop-shadow(0 18px 20px rgba(0, 0, 0, 0.34));
+  animation: introCarZoom 0.9s cubic-bezier(.2,.8,.2,1) forwards, introCarShift 0.85s cubic-bezier(.2,.8,.2,1) 0.95s forwards;
+}
+.intro-window { fill: #69b8da; stroke-width: 3; }
+.intro-light { fill: none; stroke: #fff; stroke-width: 7; stroke-linecap: round; }
+.intro-logo-row h1 {
+  margin: 0 0 0 clamp(155px, 25vw, 250px);
+  color: white;
+  font-size: clamp(3.4rem, 9vw, 6.7rem);
+  line-height: 1;
+  letter-spacing: -0.065em;
+  opacity: 0;
+  transform: translateX(90px);
+  animation: introTextSlide 0.85s ease 0.95s forwards;
+}
+#introBrand > p {
+  margin: 15px 0 0;
+  color: #eef9f5;
+  font-size: clamp(1.35rem, 3vw, 2.1rem);
+  opacity: 0;
+  animation: introSubtitle 0.75s ease 1.95s forwards;
+}
+#introDirections {
+  position: absolute;
+  width: min(720px, calc(100vw - 32px));
+  padding: clamp(22px, 4vw, 38px);
+  border: 1px solid rgba(255,255,255,.24);
+  border-radius: 22px;
+  background: rgba(9, 24, 28, 0.82);
+  box-shadow: 0 28px 80px rgba(0,0,0,.42);
+  backdrop-filter: blur(18px);
+  opacity: 0;
+  transform: translateY(24px);
+  pointer-events: none;
+}
+#introOverlay.directions #introBrand { animation: introBrandOut .55s ease forwards; }
+#introOverlay.directions #introDirections { animation: introDirectionsIn .7s ease .25s forwards; pointer-events: auto; }
+.intro-kicker { color: #ffdc69; font-size: 12px; font-weight: 900; letter-spacing: .16em; }
+#introDirections h2 { margin: 8px 0 22px; font-size: clamp(1.8rem, 5vw, 3rem); }
+.intro-control-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.intro-control-grid > div { display: grid; grid-template-columns: 82px 1fr; padding: 12px; border-radius: 12px; background: rgba(255,255,255,.08); text-align: left; }
+.intro-control-grid kbd { grid-row: 1 / 3; align-self: center; justify-self: start; }
+.intro-control-grid strong { font-size: 14px; }
+.intro-control-grid span { color: #bcd0cc; font-size: 12px; }
+kbd { display: inline-block; min-width: 29px; padding: 5px 8px; border: 1px solid rgba(255,255,255,.28); border-bottom-width: 3px; border-radius: 7px; background: rgba(255,255,255,.13); color: white; font: 800 12px/1 system-ui; text-align: center; }
+.intro-more-controls { margin: 17px 0; color: #c9dbd7; font-size: 13px; line-height: 2.2; }
+#startNow { width: 100%; padding: 14px 20px; border: 0; border-radius: 11px; background: #ffcc33; color: #172019; font: 900 16px/1 system-ui; cursor: pointer; box-shadow: 0 10px 28px rgba(255,204,51,.22); }
+#startNow:hover { background: #ffda61; transform: translateY(-1px); }
+
+@keyframes introCarZoom { from { opacity: 0; transform: translateX(-50%) scale(.45); } to { opacity: 1; transform: translateX(-50%) scale(1); } }
+@keyframes introCarShift { from { left: 50%; transform: translateX(-50%); } to { left: 7%; transform: translateX(0); } }
+@keyframes introTextSlide { to { opacity: 1; transform: translateX(0); } }
+@keyframes introSubtitle { to { opacity: 1; } }
+@keyframes introBrandOut { to { opacity: 0; transform: scale(.95); pointer-events: none; } }
+@keyframes introDirectionsIn { to { opacity: 1; transform: translateY(0); } }
+
+@media (max-width: 600px) {
+  .intro-control-grid { grid-template-columns: 1fr; }
+  #introDirections { max-height: calc(100vh - 24px); overflow: auto; }
+  .intro-logo-row { height: 145px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .intro-car, .intro-logo-row h1, #introBrand > p { animation-duration: .01ms; animation-delay: 0s; }
+}
+
 #hud {
   position: fixed;
   top: 16px;

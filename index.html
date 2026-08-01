@@ -4,9 +4,47 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DriveNow</title>
-    <link rel="stylesheet" href="./styles.css?v=3" />
+    <script>
+      try {
+        const introSeen = sessionStorage.getItem("drivenow-intro-seen") === "1";
+        document.documentElement.dataset.intro = introSeen ? "seen" : "new";
+        if (!introSeen) sessionStorage.setItem("drivenow-intro-seen", "1");
+      } catch {
+        document.documentElement.dataset.intro = "new";
+      }
+    </script>
+    <link rel="stylesheet" href="./styles.css?v=4" />
   </head>
   <body>
+    <main id="introOverlay" aria-label="Welcome to DriveNow">
+      <section id="introBrand" aria-live="polite">
+        <div class="intro-logo-row">
+          <svg class="intro-car" viewBox="0 0 180 110" role="img" aria-label="Car icon">
+            <path d="M27 67 39 38c3-7 9-11 17-11h67c8 0 14 4 18 11l13 29" />
+            <path d="M17 66h146c7 0 12 5 12 12v13H5V78c0-7 5-12 12-12Z" />
+            <path d="M52 37h74l13 29H39l13-29Z" class="intro-window" />
+            <circle cx="39" cy="90" r="13" /><circle cx="141" cy="90" r="13" />
+            <path d="M18 73h23M139 73h23" class="intro-light" />
+          </svg>
+          <h1>DriveNow</h1>
+        </div>
+        <p>Let’s drive together.</p>
+      </section>
+      <section id="introDirections" aria-label="How to play">
+        <span class="intro-kicker">READY TO DRIVE?</span>
+        <h2>Know the controls</h2>
+        <div class="intro-control-grid">
+          <div><kbd>↑ ↓</kbd><strong>Drive</strong><span>Accelerate and reverse</span></div>
+          <div><kbd>← →</kbd><strong>Steer</strong><span>Turn the car or pedestrian</span></div>
+          <div><kbd>Space</kbd><strong>Drift</strong><span>Use the handbrake</span></div>
+          <div><kbd>C</kbd><strong>Enter / Exit</strong><span>Open doors and interact</span></div>
+          <div><kbd>H</kbd><strong>Horn</strong><span>Hold for a longer honk</span></div>
+          <div><kbd>P</kbd><strong>Police mode</strong><span>Click a car to pull it over</span></div>
+        </div>
+        <p class="intro-more-controls"><kbd>Q</kbd>/<kbd>E</kbd> signals · <kbd>Z</kbd> hazards · <kbd>O</kbd> stop siren · <kbd>1</kbd> speak to driver</p>
+        <button id="startNow" type="button">Start Now</button>
+      </section>
+    </main>
     <div id="hud">
       <div class="brand">DriveNow</div>
       <div class="readout">
@@ -48,6 +86,6 @@
         }
       }
     </script>
-    <script type="module" src="./src/main.js?v=133"></script>
+    <script type="module" src="./src/main.js?v=134"></script>
   </body>
 </html>

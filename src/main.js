@@ -32,6 +32,8 @@ const trafficDensityEl = document.querySelector("#trafficDensity");
 const trafficDensityValueEl = document.querySelector("#trafficDensityValue");
 const policeInteractionEl = document.querySelector("#policeInteraction");
 const driverResponseEl = document.querySelector("#driverResponse");
+const introOverlayEl = document.querySelector("#introOverlay");
+const startNowBtn = document.querySelector("#startNow");
 
 const clock = new THREE.Clock();
 const keys = new Set();
@@ -116,6 +118,7 @@ const state = {
   policeSiren: null,
   policeInterview: false,
   policeConversation: null,
+  introActive: document.documentElement.dataset.intro === "new",
   botSensitivity: 0,
   trafficDensity: 1,
   trafficInitialized: false,
@@ -197,9 +200,23 @@ function init() {
   trafficDensityEl.addEventListener("input", updateTrafficDensity);
   restartBtn.addEventListener("click", restartCity);
   policeInteractionEl.addEventListener("click", onPoliceInteractionClick);
+  setupIntro();
   updateBotSensitivity();
   updateTrafficDensity();
   loadingEl.hidden = true;
+}
+
+function setupIntro() {
+  if (!state.introActive) return;
+  const revealDelay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 50 : 2850;
+  window.setTimeout(() => introOverlayEl.classList.add("directions"), revealDelay);
+  startNowBtn.addEventListener("click", () => {
+    introOverlayEl.classList.add("leaving");
+    state.introActive = false;
+    clock.getDelta();
+    renderer.domElement.focus();
+    window.setTimeout(() => introOverlayEl.classList.add("finished"), 560);
+  }, { once: true });
 }
 
 function createRoads() {
@@ -890,6 +907,11 @@ function createSkylineDetails() {
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.045);
+  if (state.introActive) {
+    updateCamera(dt);
+    renderer.render(scene, camera);
+    return;
+  }
   state.time += dt;
   updateTrafficLights();
   updateCrashPhysics(dt);
