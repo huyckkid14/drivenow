@@ -6,6 +6,8 @@ scene.fog = new THREE.Fog(0x9bc8e8, 105, 255);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 600);
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+const policeRaycaster = new THREE.Raycaster();
+const policePointer = new THREE.Vector2();
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
@@ -107,6 +109,9 @@ const state = {
   doorMotionStart: -10,
   carTransition: null,
   crashMeeting: null,
+  policeMode: false,
+  policeTarget: null,
+  policeSiren: null,
   botSensitivity: 0,
   trafficDensity: 1,
   trafficInitialized: false,
@@ -574,6 +579,9 @@ function createPlayer() {
     indicators: player.userData.indicators,
     brakeLights: player.userData.brakeLights,
     driverDoor: player.userData.driverDoor,
+    body: player.userData.body,
+    cabin: player.userData.cabin,
+    wheels: player.userData.wheels,
   };
   city.add(player);
   cars.push(player);
@@ -759,6 +767,9 @@ function spawnBot(start) {
     indicators: bot.userData.indicators,
     brakeLights: bot.userData.brakeLights,
     driverDoor: bot.userData.driverDoor,
+    body: bot.userData.body,
+    cabin: bot.userData.cabin,
+    wheels: bot.userData.wheels,
   };
   city.add(bot);
   cars.push(bot);
@@ -885,6 +896,7 @@ function animate() {
   updateNpcPedestrians(dt);
   updateCarDoor(dt);
   updateCrashMeeting(dt);
+  updatePoliceMode(dt);
   updateBots(dt);
   updateEngineSounds(dt);
   updateTrafficSpawns();
@@ -1375,6 +1387,7 @@ function hijackBotCar(target) {
 }
 
 function transferPlayerControl(target, message) {
+  if (state.policeMode) disablePoliceMode();
   const oldPlayer = state.player;
   const pedestrian = state.pedestrian;
   const oldData = oldPlayer.userData;
@@ -1427,10 +1440,233 @@ function transferPlayerControl(target, message) {
   statusEl.textContent = message;
 }
 
+function togglePoliceMode() {
+  if (state.onFoot || state.securityRoom || state.playerCrashed) return;
+  if (state.policeMode) {
+    disablePoliceMode();
+    statusEl.textContent = "Police mode off";
+    return;
+  }
+  state.policeMode = true;
+  const car = state.player;
+  const kit = new THREE.Group();
+  const white = new THREE.MeshStandardMaterial({ color: 0xf2f3f4, roughness: 0.38 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x080a0d, roughness: 0.36, metalness: 0.12 });
+  const steel = new THREE.MeshStandardMaterial({ color: 0x20252b, roughness: 0.3, metalness: 0.72 });
+  const red = new THREE.MeshStandardMaterial({ color: 0xff2020, emissive: 0xff0000, emissiveIntensity: 0.2 });
+  const blue = new THREE.MeshStandardMaterial({ color: 0x2080ff, emissive: 0x0066ff, emissiveIntensity: 0.2 });
+  const leftPanel = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.62, 1.72), white);
+  const rightPanel = leftPanel.clone();
+  leftPanel.position.set(1.215, 0.72, -0.05);
+  rightPanel.position.set(-1.215, 0.72, -0.05);
+
+  const hoodPanel = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.045, 1.15), white);
+  hoodPanel.position.set(0, 1.035, 1.43);
+  const trunkPanel = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.045, 0.72), white);
+  trunkPanel.position.set(0, 1.035, -1.72);
+
+  const roofBase = new THREE.Mesh(new THREE.BoxGeometry(1.65, 0.12, 0.46), dark);
+  roofBase.position.set(0, 1.73, -0.2);
+  const redLight = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.25, 0.42), red);
+  const blueLight = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.25, 0.42), blue);
+  redLight.position.set(0.42, 1.91, -0.2);
+  blueLight.position.set(-0.42, 1.91, -0.2);
+
+  const pushTop = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.14, 0.12), steel);
+  const pushBottom = pushTop.clone();
+  pushTop.position.set(0, 0.86, 2.34);
+  pushBottom.position.set(0, 0.48, 2.34);
+  const pushLeft = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.58, 0.12), steel);
+  const pushRight = pushLeft.clone();
+  pushLeft.position.set(0.7, 0.67, 2.34);
+  pushRight.position.set(-0.7, 0.67, 2.34);
+
+  const spotlightMat = new THREE.MeshStandardMaterial({ color: 0xe8f5ff, emissive: 0xc9eaff, emissiveIntensity: 1.2, metalness: 0.35 });
+  const leftSpotlight = new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 7), spotlightMat);
+  const rightSpotlight = leftSpotlight.clone();
+  leftSpotlight.position.set(0.96, 1.48, 0.43);
+  rightSpotlight.position.set(-0.96, 1.48, 0.43);
+
+  const labelCanvas = document.createElement("canvas");
+  labelCanvas.width = 512;
+  labelCanvas.height = 128;
+  const labelContext = labelCanvas.getContext("2d");
+  labelContext.fillStyle = "#f2f3f4";
+  labelContext.fillRect(0, 0, 512, 128);
+  labelContext.fillStyle = "#080a0d";
+  labelContext.font = "900 72px Arial";
+  labelContext.textAlign = "center";
+  labelContext.textBaseline = "middle";
+  labelContext.fillText("POLICE", 256, 67);
+  const labelMaterial = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(labelCanvas), transparent: true });
+  const leftLabel = new THREE.Mesh(new THREE.PlaneGeometry(1.45, 0.36), labelMaterial);
+  const rightLabel = leftLabel.clone();
+  leftLabel.position.set(1.257, 0.76, -0.05);
+  leftLabel.rotation.y = Math.PI / 2;
+  rightLabel.position.set(-1.257, 0.76, -0.05);
+  rightLabel.rotation.y = -Math.PI / 2;
+
+  kit.add(leftPanel, rightPanel, hoodPanel, trunkPanel, roofBase, redLight, blueLight,
+    pushTop, pushBottom, pushLeft, pushRight, leftSpotlight, rightSpotlight, leftLabel, rightLabel);
+  car.add(kit);
+  car.userData.policeKit = kit;
+  car.userData.policeRedLight = redLight;
+  car.userData.policeBlueLight = blueLight;
+  const body = car.userData.body || car.children.find((child) => child.geometry?.parameters?.width === 2.35);
+  car.userData.body = body;
+  car.userData.originalBodyColor = body.material.color.clone();
+  car.userData.originalDoorColor = car.userData.driverDoor.material.color.clone();
+  body.material.color.set(0x030405);
+  body.material.roughness = 0.32;
+  car.userData.driverDoor.material.color.set(0xf2f3f4);
+  statusEl.textContent = "Police mode — click a bot car to initiate a stop";
+}
+
+function disablePoliceMode() {
+  stopPoliceSiren();
+  const car = state.player;
+  if (car?.userData.policeKit) car.remove(car.userData.policeKit);
+  if (car?.userData.originalBodyColor) car.userData.body.material.color.copy(car.userData.originalBodyColor);
+  if (car?.userData.originalDoorColor) car.userData.driverDoor.material.color.copy(car.userData.originalDoorColor);
+  if (state.policeTarget?.userData.policePullOver && !state.policeTarget.userData.policePullOver.complete) {
+    state.policeTarget.userData.policePullOver = null;
+    state.policeTarget.userData.hazard = false;
+  }
+  state.policeMode = false;
+  state.policeTarget = null;
+}
+
+function selectPoliceTarget(event) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  policePointer.set(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1,
+  );
+  policeRaycaster.setFromCamera(policePointer, camera);
+  const hits = policeRaycaster.intersectObjects(cars, true);
+  for (const hit of hits) {
+    let car = hit.object;
+    while (car.parent && !cars.includes(car)) car = car.parent;
+    if (!cars.includes(car) || car.userData.player || car.userData.crashed || car.userData.immobilized) continue;
+    beginPoliceStop(car);
+    return true;
+  }
+  return false;
+}
+
+function beginPoliceStop(car) {
+  if (state.policeTarget?.userData.policePullOver) {
+    state.policeTarget.userData.policePullOver = null;
+    state.policeTarget.userData.hazard = false;
+  }
+  const destination = playerLaneMeetingCandidates(car.position).find((point) => isClearPolicePullOverPoint(point, car));
+  if (!destination) {
+    statusEl.textContent = "No clear player-lane pull-over position";
+    return;
+  }
+  car.userData.policePullOver = {
+    acknowledgeUntil: state.time + 0.9,
+    destination: destination.clone(),
+    complete: false,
+  };
+  car.userData.hazard = true;
+  state.policeTarget = car;
+  startPoliceSiren();
+  statusEl.textContent = "Target acknowledged — hazards on";
+}
+
+function isClearPolicePullOverPoint(point, target) {
+  if (!isPlayerOnlyLanePosition(point)) return false;
+  if (cars.some((car) => car !== target && car.position.distanceToSquared(point) < 16)) return false;
+  return !buildingObstacles.some((obstacle) =>
+    Math.abs(point.x - obstacle.x) < obstacle.halfX + 1.5 && Math.abs(point.z - obstacle.z) < obstacle.halfZ + 1.5,
+  );
+}
+
+function updatePoliceMode(dt) {
+  if (state.policeMode) {
+    const flash = Math.floor(state.time * 7) % 2 === 0;
+    const red = state.player.userData.policeRedLight;
+    const blue = state.player.userData.policeBlueLight;
+    if (red && blue) {
+      red.material.emissiveIntensity = flash ? 5 : 0.18;
+      blue.material.emissiveIntensity = flash ? 0.18 : 5;
+    }
+  }
+  updatePoliceSiren();
+  const car = state.policeTarget;
+  const stop = car?.userData.policePullOver;
+  if (!car || !stop || stop.complete) return;
+  if (state.time < stop.acknowledgeUntil) {
+    car.userData.speed = moveToward(car.userData.speed, Math.min(4, Math.max(0, car.userData.speed)), dt * 12);
+    return;
+  }
+  const delta = stop.destination.clone().sub(car.position);
+  const distance = delta.length();
+  if (distance <= 0.65) {
+    car.position.copy(stop.destination);
+    car.userData.speed = 0;
+    car.userData.velocity.set(0, 0, 0);
+    car.userData.braking = true;
+    stop.complete = true;
+    revealPulledOverDriver(car);
+    statusEl.textContent = "Vehicle pulled over — driver window lowered — press O to stop siren";
+    return;
+  }
+  delta.normalize();
+  car.userData.speed = moveToward(car.userData.speed, 5.2, dt * 7);
+  car.userData.velocity.copy(delta).multiplyScalar(car.userData.speed);
+  car.rotation.y = lerpAngle(car.rotation.y, Math.atan2(delta.x, delta.z), dt * 4.5);
+  car.position.addScaledVector(car.userData.velocity, dt);
+}
+
+function revealPulledOverDriver(car) {
+  if (car.userData.visiblePoliceDriver) return;
+  const skin = new THREE.MeshStandardMaterial({ color: 0xd09a76, roughness: 0.82 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x081017, roughness: 0.35, transparent: true, opacity: 0.72 });
+  const openWindow = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.5, 0.8), dark);
+  openWindow.position.set(0.86, 1.38, -0.18);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.25, 12, 8), skin);
+  head.position.set(0.91, 1.5, -0.18);
+  car.add(openWindow, head);
+  car.userData.visiblePoliceDriver = head;
+  car.userData.loweredWindow = openWindow;
+}
+
+function startPoliceSiren() {
+  stopPoliceSiren();
+  const audio = ensureAudio();
+  if (!audio) return;
+  const oscillator = audio.createOscillator();
+  const gain = audio.createGain();
+  oscillator.type = "sawtooth";
+  oscillator.frequency.setValueAtTime(640, audio.currentTime);
+  gain.gain.setValueAtTime(0.085, audio.currentTime);
+  oscillator.connect(gain);
+  gain.connect(audio.destination);
+  oscillator.start();
+  state.policeSiren = { oscillator, gain };
+}
+
+function updatePoliceSiren() {
+  if (!state.policeSiren || !state.audio) return;
+  const frequency = 720 + Math.sin(state.time * 5.8) * 260;
+  state.policeSiren.oscillator.frequency.setTargetAtTime(frequency, state.audio.currentTime, 0.035);
+}
+
+function stopPoliceSiren() {
+  if (!state.policeSiren || !state.audio) return;
+  const now = state.audio.currentTime;
+  state.policeSiren.gain.gain.setTargetAtTime(0.0001, now, 0.035);
+  state.policeSiren.oscillator.stop(now + 0.14);
+  state.policeSiren = null;
+}
+
 function updateBots(dt) {
   for (const bot of cars) {
     const data = bot.userData;
     if (data.player || data.immobilized || data.crashed) continue;
+    if (data.policePullOver) continue;
     if (data.waitingForEntry) {
       if (canSpawnBotAt(data.waitingForEntry, bot)) {
         bot.position.set(data.waitingForEntry.x, 0, data.waitingForEntry.z);
@@ -1906,6 +2142,11 @@ function updateDriverReactions(dt) {
   const player = state.player;
   const data = player.userData;
   if (data.immobilized || data.crashed || state.playerCrashed) return;
+  // Traffic yields silently to an actively responding police vehicle.
+  if (state.policeMode && state.policeSiren) {
+    state.greenBlockTimer = 0;
+    return;
+  }
 
   const signal = playerSignalInfo();
   const botBehind = findBotBehindPlayer(19);
@@ -2988,6 +3229,17 @@ function updateHud() {
     statusEl.textContent = state.player.userData.crashed || state.player.userData.immobilized
       ? "Wrecked car — continue on foot or restart"
       : distance <= 3.3 ? "Press C to get back in" : "On foot — follow the blue beacon to your car";
+  } else if (state.policeMode) {
+    const stop = state.policeTarget?.userData.policePullOver;
+    statusEl.textContent = !stop
+      ? "POLICE MODE — click a bot car to initiate a stop"
+      : stop.complete
+        ? state.policeSiren
+          ? "Vehicle pulled over — driver window lowered — press O to stop siren"
+          : "Vehicle pulled over — driver window lowered"
+        : state.time < stop.acknowledgeUntil
+          ? "Target acknowledged — hazards on"
+          : "Target pulling over to player lane";
   } else if (!state.playerCrashed) {
     statusEl.textContent = state.crashed ? "Crash in city" : "City clear";
   }
@@ -2998,11 +3250,11 @@ function onKeyDown(event) {
   if (!key) return;
   ensureAudio();
   keys.add(key);
-  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "space", "q", "e", "z", "c", "h"].includes(key)) {
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "space", "q", "e", "z", "c", "h", "p", "o"].includes(key)) {
     event.preventDefault();
     event.stopPropagation();
   }
-  if (event.repeat && ["q", "e", "z", "c", "h"].includes(key)) return;
+  if (event.repeat && ["q", "e", "z", "c", "h", "p", "o"].includes(key)) return;
   if (key === "escape" && state.securityRoom) {
     state.securitySelected = null;
     event.preventDefault();
@@ -3014,7 +3266,12 @@ function onKeyDown(event) {
   if (key === "z") toggleHazards();
   if (key === "c") toggleCarExit();
   if (key === "h" && !state.onFoot && !state.securityRoom) startPlayerHorn();
-  if (["q", "e", "z", "c", "h"].includes(key)) state.toggleHeld.add(key);
+  if (key === "p") togglePoliceMode();
+  if (key === "o" && state.policeSiren) {
+    stopPoliceSiren();
+    statusEl.textContent = "Police siren off";
+  }
+  if (["q", "e", "z", "c", "h", "p", "o"].includes(key)) state.toggleHeld.add(key);
 }
 
 function onKeyPress(event) {
@@ -3046,6 +3303,10 @@ function onPointerDown(event) {
     const column = THREE.MathUtils.clamp(Math.floor(((event.clientX - rect.left) / rect.width) * 5), 0, 4);
     const row = THREE.MathUtils.clamp(Math.floor(((event.clientY - rect.top) / rect.height) * 5), 0, 4);
     state.securitySelected = row * 5 + column;
+    event.preventDefault();
+    return;
+  }
+  if (state.policeMode && !state.onFoot && selectPoliceTarget(event)) {
     event.preventDefault();
     return;
   }
@@ -3083,6 +3344,8 @@ function normalizeKey(event) {
     KeyZ: "z",
     KeyC: "c",
     KeyH: "h",
+    KeyP: "p",
+    KeyO: "o",
     Space: "space",
     Escape: "escape",
   };
@@ -3364,6 +3627,10 @@ function stopPlayerHorn() {
 }
 
 function restartCity() {
+  stopPoliceSiren();
+  state.policeMode = false;
+  state.policeTarget = null;
+  state.policeSiren = null;
   if (state.pedestrian) city.remove(state.pedestrian);
   if (state.carBeacon) city.remove(state.carBeacon);
   if (state.crashMeeting?.arrow) city.remove(state.crashMeeting.arrow);
