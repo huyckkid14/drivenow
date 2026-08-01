@@ -1582,13 +1582,14 @@ function findPolicePullOverDestination(target, roadYaw = target.rotation.y, excl
   const fixed = nearestGrid(horizontal ? target.position.z : target.position.x);
   const laneCoordinate = horizontal ? target.position.z : target.position.x;
   const side = Math.sign(laneCoordinate - fixed) || 1;
+  const nearestSafeLaneCenter = ROAD_HALF + CAR_HALF_WIDTH + 0.45;
   const candidates = [];
   // Stay beside the target's own traffic lane and move slightly forward while
   // merging outward. Never choose a reserved lane across oncoming traffic.
-  for (const forwardOffset of [18, 26, 12, 32, 8, 38]) {
+  for (const forwardOffset of [8, 12, 18, 6, 24, 30]) {
     const point = target.position.clone().addScaledVector(direction, forwardOffset);
-    if (horizontal) point.z = fixed + side * PLAYER_LANE_OFFSET;
-    else point.x = fixed + side * PLAYER_LANE_OFFSET;
+    if (horizontal) point.z = fixed + side * nearestSafeLaneCenter;
+    else point.x = fixed + side * nearestSafeLaneCenter;
     point.x = THREE.MathUtils.clamp(point.x, -BOUNDS + 1.5, BOUNDS - 1.5);
     point.z = THREE.MathUtils.clamp(point.z, -BOUNDS + 1.5, BOUNDS - 1.5);
     const along = horizontal ? point.x : point.z;
@@ -1729,6 +1730,7 @@ function updateBots(dt) {
       continue;
     }
 
+    const wasPoliceClearing = Boolean(data.policeClearing);
     const policeClearance = getPoliceTrafficClearance(bot);
     data.policeClearing = Boolean(policeClearance);
     if (policeClearance) {
@@ -1736,15 +1738,19 @@ function updateBots(dt) {
       data.policeRecoveryUntil = 0;
       const previous = bot.position.clone();
       const botForward = dirs[data.dir] || getForward(bot).normalize();
-      const clearanceSign = policeClearance.direction.dot(botForward) >= 0 ? 1 : -1;
-      if (data.policeClearanceSign !== clearanceSign) {
+      const requestedSign = policeClearance.direction.dot(botForward) >= 0 ? 1 : -1;
+      const clearanceSign = wasPoliceClearing && data.policeClearanceSign
+        ? data.policeClearanceSign
+        : requestedSign;
+      if (!wasPoliceClearing || data.policeClearanceSign !== clearanceSign) {
         data.policeClearanceSign = clearanceSign;
         data.policeClearanceSpeed = 0;
       }
+      const clearanceDirection = botForward.clone().multiplyScalar(clearanceSign);
       data.braking = false;
       data.policeClearanceSpeed = moveToward(data.policeClearanceSpeed || 0, policeClearance.speed, dt * 5.5);
       data.speed = data.policeClearanceSpeed;
-      data.velocity.copy(policeClearance.direction).multiplyScalar(data.policeClearanceSpeed);
+      data.velocity.copy(clearanceDirection).multiplyScalar(data.policeClearanceSpeed);
       const candidate = bot.position.clone().addScaledVector(data.velocity, dt);
       if (!policeClearanceMovementBlocked(bot, candidate)) bot.position.copy(candidate);
       else {
@@ -1850,7 +1856,7 @@ function getPoliceTrafficClearance(bot) {
   const routeProgress = THREE.MathUtils.clamp(delta.dot(route) / routeLengthSq, 0, 1);
   const routeClosest = target.position.clone().addScaledVector(route, routeProgress);
   const distanceToRoute = bot.position.distanceTo(routeClosest);
-  if (Math.abs(alignment) < 0.45 && distanceToRoute < 8.5 && delta.length() < 34) {
+  if (Math.abs(alignment) < 0.45 && distanceToRoute < 12 && delta.length() < 42) {
     return { direction: policeRouteClearingDirection(bot, botForward, target.position, stop.destination), speed: 6.5 };
   }
   if (alignment < -0.7 && along > -2 && along < 30 && lateral < 5.2) {
