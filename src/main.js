@@ -1582,14 +1582,16 @@ function findPolicePullOverDestination(target, roadYaw = target.rotation.y, excl
   const fixed = nearestGrid(horizontal ? target.position.z : target.position.x);
   const laneCoordinate = horizontal ? target.position.z : target.position.x;
   const side = Math.sign(laneCoordinate - fixed) || 1;
-  const nearestSafeLaneCenter = ROAD_HALF + CAR_HALF_WIDTH + 0.45;
+  // Leave a complete car-width corridor between the traffic-road edge and the
+  // pulled-over vehicle, plus a small steering margin for the player.
+  const pullOverLaneCenter = ROAD_HALF + CAR_HALF_WIDTH * 3 + 0.65;
   const candidates = [];
   // Stay beside the target's own traffic lane and move slightly forward while
   // merging outward. Never choose a reserved lane across oncoming traffic.
   for (const forwardOffset of [8, 12, 18, 6, 24, 30]) {
     const point = target.position.clone().addScaledVector(direction, forwardOffset);
-    if (horizontal) point.z = fixed + side * nearestSafeLaneCenter;
-    else point.x = fixed + side * nearestSafeLaneCenter;
+    if (horizontal) point.z = fixed + side * pullOverLaneCenter;
+    else point.x = fixed + side * pullOverLaneCenter;
     point.x = THREE.MathUtils.clamp(point.x, -BOUNDS + 1.5, BOUNDS - 1.5);
     point.z = THREE.MathUtils.clamp(point.z, -BOUNDS + 1.5, BOUNDS - 1.5);
     const along = horizontal ? point.x : point.z;

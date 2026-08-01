@@ -30,7 +30,7 @@
 - Bots should avoid spawning or moving into another vehicle. Fix collision causes rather than muting genuine collision sounds.
 - Reverse behavior means physical backward movement without rotating the car to face backward.
 - Traffic yielding must recover: after reversing or stopping, bots should resume forward driving when their route becomes clear.
-- Police pull-over targets must use the nearest safe edge of the adjacent player-only lane, keep the full car outside normal traffic, and steer rather than slide sideways.
+- Police pull-over targets must enter the adjacent player-only lane far enough to leave at least one complete car width plus a safety margin between the normal road edge and the pulled-over vehicle. They must steer rather than slide sideways.
 - During police pull-overs, nearby traffic must choose a collision-free forward or reverse clearing direction. Do not instantly flip a car's existing forward speed into reverse speed.
 - The police siren continues until the player presses `O`.
 
