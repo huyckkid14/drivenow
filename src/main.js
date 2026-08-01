@@ -1559,7 +1559,7 @@ function beginPoliceStop(car) {
     state.policeTarget.userData.policePullOver = null;
     state.policeTarget.userData.hazard = false;
   }
-  const destination = playerLaneMeetingCandidates(car.position).find((point) => isClearPolicePullOverPoint(point, car));
+  const destination = findPolicePullOverDestination(car);
   if (!destination) {
     statusEl.textContent = "No clear player-lane pull-over position";
     return;
@@ -1575,9 +1575,18 @@ function beginPoliceStop(car) {
   statusEl.textContent = "Target acknowledged — hazards on";
 }
 
+function findPolicePullOverDestination(target) {
+  return playerLaneMeetingCandidates(target.position).find((point) => isClearPolicePullOverPoint(point, target));
+}
+
 function isClearPolicePullOverPoint(point, target) {
   if (!isPlayerOnlyLanePosition(point)) return false;
-  if (cars.some((car) => car !== target && car.position.distanceToSquared(point) < 16)) return false;
+  // Use a full-car clearance radius, not only the destination's center point.
+  // This keeps the pulled-over car's bumpers and sides clear of parked traffic.
+  const clearance = CAR_HALF_LENGTH * 2 + 1.25;
+  if (cars.some((car) =>
+    car !== target && car.visible && !car.userData.waitingForEntry && car.position.distanceToSquared(point) < clearance * clearance,
+  )) return false;
   return !buildingObstacles.some((obstacle) =>
     Math.abs(point.x - obstacle.x) < obstacle.halfX + 1.5 && Math.abs(point.z - obstacle.z) < obstacle.halfZ + 1.5,
   );
@@ -1601,6 +1610,18 @@ function updatePoliceMode(dt) {
     car.userData.speed = moveToward(car.userData.speed, Math.min(4, Math.max(0, car.userData.speed)), dt * 12);
     return;
   }
+  if (!isClearPolicePullOverPoint(stop.destination, car)) {
+    const replacement = findPolicePullOverDestination(car);
+    if (replacement) {
+      stop.destination.copy(replacement);
+    } else {
+      car.userData.speed = 0;
+      car.userData.velocity.set(0, 0, 0);
+      car.userData.braking = true;
+      statusEl.textContent = "Target waiting — no clear pull-over space";
+      return;
+    }
+  }
   const delta = stop.destination.clone().sub(car.position);
   const distance = delta.length();
   if (distance <= 0.65) {
@@ -1617,7 +1638,16 @@ function updatePoliceMode(dt) {
   car.userData.speed = moveToward(car.userData.speed, 5.2, dt * 7);
   car.userData.velocity.copy(delta).multiplyScalar(car.userData.speed);
   car.rotation.y = lerpAngle(car.rotation.y, Math.atan2(delta.x, delta.z), dt * 4.5);
-  car.position.addScaledVector(car.userData.velocity, dt);
+  const candidate = car.position.clone().addScaledVector(car.userData.velocity, dt);
+  if (botMovementBlocked(car, candidate)) {
+    car.userData.speed = 0;
+    car.userData.velocity.set(0, 0, 0);
+    car.userData.braking = true;
+    statusEl.textContent = "Target yielding to traffic while pulling over";
+    return;
+  }
+  car.userData.braking = false;
+  car.position.copy(candidate);
 }
 
 function revealPulledOverDriver(car) {

@@ -45,6 +45,7 @@ A static Three.js mini city driving game for GitHub Pages.
 - Abandoned player cars remain reclaimable: exit the current vehicle, walk back within 3.7 units of an earlier player car, and press C to transfer control back to it.
 - Localhost police mode: press P while driving to convert the player vehicle into a black-and-white marked patrol car with POLICE doors, white hood and trunk panels, push bumper, spotlights, and a flashing red/blue roof bar. Click a bot car to start the siren; the target acknowledges with hazards, pulls into the nearest clear player-only lane, stops, lowers its window, and reveals its driver. The siren continues throughout and after the stop until O is pressed.
 - Bot drivers suppress their warning horns while the police siren is actively sounding; normal horn reactions return when the siren stops.
+- Police pull-over destinations reserve full-car clearance. A target chooses another player-lane space if its destination becomes occupied and stops short whenever another vehicle blocks its pull-over path.
 - Bots continuously match the car ahead with a small bumper gap and slow to a controlled entry speed before every intersection.
 - Dense road positions are used only for initial population; replacement traffic enters exclusively from clear city-boundary lanes.
 - Off-map cars and vehicles in crossing or adjacent lanes are excluded from following and intersection-occupancy checks.
