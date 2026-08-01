@@ -896,8 +896,8 @@ function animate() {
   updateNpcPedestrians(dt);
   updateCarDoor(dt);
   updateCrashMeeting(dt);
-  updatePoliceMode(dt);
   updateBots(dt);
+  updatePoliceMode(dt);
   updateEngineSounds(dt);
   updateTrafficSpawns();
   updateDriverReactions(dt);
@@ -1567,6 +1567,7 @@ function beginPoliceStop(car) {
   car.userData.policePullOver = {
     acknowledgeUntil: state.time + 0.9,
     destination: destination.clone(),
+    roadYaw: car.rotation.y,
     complete: false,
   };
   car.userData.hazard = true;
@@ -1575,8 +1576,29 @@ function beginPoliceStop(car) {
   statusEl.textContent = "Target acknowledged — hazards on";
 }
 
-function findPolicePullOverDestination(target) {
-  return playerLaneMeetingCandidates(target.position).find((point) => isClearPolicePullOverPoint(point, target));
+function findPolicePullOverDestination(target, roadYaw = target.rotation.y, excluded = null) {
+  const direction = dirs[target.userData.dir] || getForward(target).normalize();
+  const horizontal = Math.abs(direction.x) > Math.abs(direction.z);
+  const fixed = nearestGrid(horizontal ? target.position.z : target.position.x);
+  const laneCoordinate = horizontal ? target.position.z : target.position.x;
+  const side = Math.sign(laneCoordinate - fixed) || 1;
+  const candidates = [];
+  // Stay beside the target's own traffic lane and move slightly forward while
+  // merging outward. Never choose a reserved lane across oncoming traffic.
+  for (const forwardOffset of [18, 26, 12, 32, 8, 38]) {
+    const point = target.position.clone().addScaledVector(direction, forwardOffset);
+    if (horizontal) point.z = fixed + side * PLAYER_LANE_OFFSET;
+    else point.x = fixed + side * PLAYER_LANE_OFFSET;
+    point.x = THREE.MathUtils.clamp(point.x, -BOUNDS + 1.5, BOUNDS - 1.5);
+    point.z = THREE.MathUtils.clamp(point.z, -BOUNDS + 1.5, BOUNDS - 1.5);
+    const along = horizontal ? point.x : point.z;
+    if (Math.abs(along - nearestGrid(along)) <= ROAD_HALF + 1.2) continue;
+    candidates.push(point);
+  }
+  return candidates.find((point) =>
+    (!excluded || point.distanceToSquared(excluded) > 1) &&
+    isClearPolicePullOverPoint(point, target),
+  );
 }
 
 function isClearPolicePullOverPoint(point, target) {
@@ -1611,7 +1633,7 @@ function updatePoliceMode(dt) {
     return;
   }
   if (!isClearPolicePullOverPoint(stop.destination, car)) {
-    const replacement = findPolicePullOverDestination(car);
+    const replacement = findPolicePullOverDestination(car, stop.roadYaw, stop.destination);
     if (replacement) {
       stop.destination.copy(replacement);
     } else {
@@ -1626,6 +1648,7 @@ function updatePoliceMode(dt) {
   const distance = delta.length();
   if (distance <= 0.65) {
     car.position.copy(stop.destination);
+    car.rotation.y = stop.roadYaw;
     car.userData.speed = 0;
     car.userData.velocity.set(0, 0, 0);
     car.userData.braking = true;
@@ -1635,17 +1658,12 @@ function updatePoliceMode(dt) {
     return;
   }
   delta.normalize();
-  car.userData.speed = moveToward(car.userData.speed, 5.2, dt * 7);
-  car.userData.velocity.copy(delta).multiplyScalar(car.userData.speed);
-  car.rotation.y = lerpAngle(car.rotation.y, Math.atan2(delta.x, delta.z), dt * 4.5);
+  car.userData.speed = moveToward(car.userData.speed, 4.8, dt * 6.5);
+  const desiredYaw = Math.atan2(delta.x, delta.z);
+  car.rotation.y = lerpAngle(car.rotation.y, desiredYaw, Math.min(1, dt * 1.7));
+  const travelDirection = getForward(car).normalize();
+  car.userData.velocity.copy(travelDirection).multiplyScalar(car.userData.speed);
   const candidate = car.position.clone().addScaledVector(car.userData.velocity, dt);
-  if (botMovementBlocked(car, candidate)) {
-    car.userData.speed = 0;
-    car.userData.velocity.set(0, 0, 0);
-    car.userData.braking = true;
-    statusEl.textContent = "Target yielding to traffic while pulling over";
-    return;
-  }
   car.userData.braking = false;
   car.position.copy(candidate);
 }
@@ -1711,6 +1729,66 @@ function updateBots(dt) {
       continue;
     }
 
+    const policeClearance = getPoliceTrafficClearance(bot);
+    data.policeClearing = Boolean(policeClearance);
+    if (policeClearance) {
+      data.policeYielded = true;
+      data.policeRecoveryUntil = 0;
+      const previous = bot.position.clone();
+      const botForward = dirs[data.dir] || getForward(bot).normalize();
+      const clearanceSign = policeClearance.direction.dot(botForward) >= 0 ? 1 : -1;
+      if (data.policeClearanceSign !== clearanceSign) {
+        data.policeClearanceSign = clearanceSign;
+        data.policeClearanceSpeed = 0;
+      }
+      data.braking = false;
+      data.policeClearanceSpeed = moveToward(data.policeClearanceSpeed || 0, policeClearance.speed, dt * 5.5);
+      data.speed = data.policeClearanceSpeed;
+      data.velocity.copy(policeClearance.direction).multiplyScalar(data.policeClearanceSpeed);
+      const candidate = bot.position.clone().addScaledVector(data.velocity, dt);
+      if (!policeClearanceMovementBlocked(bot, candidate)) bot.position.copy(candidate);
+      else {
+        data.speed = 0;
+        data.policeClearanceSpeed = 0;
+        data.velocity.set(0, 0, 0);
+        data.braking = true;
+      }
+      resolveBuildingCollisions(bot, previous);
+      continue;
+    }
+
+    const activePoliceStop = state.policeTarget?.userData.policePullOver;
+    if (data.policeYielded && (!activePoliceStop || activePoliceStop.complete)) {
+      if (!data.policeRecoveryUntil) {
+        data.policeRecoveryUntil = state.time + 3.5;
+        data.policeRecoverySpeed = 0;
+        data.policeClearanceSpeed = 0;
+        data.policeClearanceSign = 0;
+      }
+      const forward = dirs[data.dir] || getForward(bot).normalize();
+      const previous = bot.position.clone();
+      data.braking = false;
+      data.policeRecoverySpeed = moveToward(data.policeRecoverySpeed || 0, Math.min(10, data.desiredSpeed || 10), dt * 5.5);
+      data.speed = data.policeRecoverySpeed;
+      data.velocity.copy(forward).multiplyScalar(data.policeRecoverySpeed);
+      const candidate = bot.position.clone().addScaledVector(data.velocity, dt);
+      if (!policeClearanceMovementBlocked(bot, candidate)) bot.position.copy(candidate);
+      else {
+        data.speed = 0;
+        data.policeRecoverySpeed = 0;
+        data.velocity.set(0, 0, 0);
+        data.braking = true;
+      }
+      bot.rotation.y = lerpAngle(bot.rotation.y, Math.atan2(forward.x, forward.z), dt * 7);
+      resolveBuildingCollisions(bot, previous);
+      if (state.time >= data.policeRecoveryUntil && data.speed > 2) {
+        data.policeYielded = false;
+        data.policeRecoveryUntil = 0;
+        data.policeRecoverySpeed = 0;
+      }
+      continue;
+    }
+
     const frontTraffic = findNearestCarAhead(bot, 28);
     const sensitivity = state.botSensitivity;
     const pedestrianAvoidance = getPedestrianYield(bot);
@@ -1754,6 +1832,90 @@ function updateBots(dt) {
     if (avoidance) resolveBuildingCollisions(bot, previous);
     wrapBot(bot);
   }
+}
+
+function getPoliceTrafficClearance(bot) {
+  const target = state.policeTarget;
+  const stop = target?.userData.policePullOver;
+  if (!target || !stop || stop.complete || bot === target) return null;
+  const forward = new THREE.Vector3(Math.sin(stop.roadYaw), 0, Math.cos(stop.roadYaw));
+  const right = new THREE.Vector3(forward.z, 0, -forward.x);
+  const botForward = dirs[bot.userData.dir] || getForward(bot).normalize();
+  const delta = bot.position.clone().sub(target.position);
+  const along = delta.dot(forward);
+  const lateral = Math.abs(delta.dot(right));
+  const alignment = botForward.dot(forward);
+  const route = stop.destination.clone().sub(target.position);
+  const routeLengthSq = Math.max(0.001, route.lengthSq());
+  const routeProgress = THREE.MathUtils.clamp(delta.dot(route) / routeLengthSq, 0, 1);
+  const routeClosest = target.position.clone().addScaledVector(route, routeProgress);
+  const distanceToRoute = bot.position.distanceTo(routeClosest);
+  if (Math.abs(alignment) < 0.45 && distanceToRoute < 8.5 && delta.length() < 34) {
+    return { direction: policeRouteClearingDirection(bot, botForward, target.position, stop.destination), speed: 6.5 };
+  }
+  if (alignment < -0.7 && along > -2 && along < 30 && lateral < 5.2) {
+    return { direction: policeRouteClearingDirection(bot, botForward, target.position, stop.destination), speed: 6.5 };
+  }
+  if (alignment < 0.7 || lateral > 3.4) return null;
+  if (along > 0 && along < 38) {
+    return { direction: forward, speed: Math.max(18, bot.userData.desiredSpeed || 18) };
+  }
+  if (along < 0 && along > -22) {
+    return { direction: forward.clone().multiplyScalar(-1), speed: 5.5 };
+  }
+  return null;
+}
+
+function policeRouteClearingDirection(bot, botForward, routeStart, routeEnd) {
+  const forwardProbe = bot.position.clone().addScaledVector(botForward, 3);
+  const reverseProbe = bot.position.clone().addScaledVector(botForward, -3);
+  const score = (point) => {
+    const route = routeEnd.clone().sub(routeStart);
+    const lengthSq = Math.max(0.001, route.lengthSq());
+    const progress = THREE.MathUtils.clamp(point.clone().sub(routeStart).dot(route) / lengthSq, 0, 1);
+    const closest = routeStart.clone().addScaledVector(route, progress);
+    return point.distanceToSquared(closest) + point.distanceToSquared(routeStart) * 0.18;
+  };
+  return score(forwardProbe) >= score(reverseProbe)
+    ? botForward.clone()
+    : botForward.clone().multiplyScalar(-1);
+}
+
+function policeClearanceMovementBlocked(bot, candidate) {
+  const forward = getForward(bot).normalize();
+  const right = new THREE.Vector3(forward.z, 0, -forward.x);
+  for (let step = 1; step <= 4; step++) {
+    const center = bot.position.clone().lerp(candidate, step / 4);
+    const probe = {
+      center,
+      forward,
+      right,
+      halfWidth: CAR_HALF_WIDTH + 0.18,
+      halfLength: CAR_HALF_LENGTH + 0.18,
+    };
+    for (const other of collidableCars) {
+      if (other === bot || other === state.policeTarget || !other.visible || other.userData.waitingForEntry) continue;
+      if (center.distanceToSquared(other.position) > 36) continue;
+      const otherBox = carBox(other);
+      otherBox.halfWidth += 0.18;
+      otherBox.halfLength += 0.18;
+      let overlaps = true;
+      for (const axis of [probe.right, probe.forward, otherBox.right, otherBox.forward]) {
+        const a = projectBox(probe, axis);
+        const b = projectBox(otherBox, axis);
+        if (Math.min(a.max, b.max) - Math.max(a.min, b.min) <= 0) {
+          overlaps = false;
+          break;
+        }
+      }
+      if (overlaps) return true;
+    }
+    if (buildingObstacles.some((obstacle) =>
+      Math.abs(center.x - obstacle.x) < obstacle.halfX + CAR_HALF_WIDTH + 0.15 &&
+      Math.abs(center.z - obstacle.z) < obstacle.halfZ + CAR_HALF_WIDTH + 0.15,
+    )) return true;
+  }
+  return false;
 }
 
 function botMovementBlocked(bot, candidate) {
@@ -2431,6 +2593,13 @@ function updateCollisions(dt) {
       if (a.userData.waitingForEntry || b.userData.waitingForEntry) continue;
       if (a.userData.immobilized && b.userData.immobilized) continue;
       if (a.userData.crashed && b.userData.crashed) continue;
+      const activePoliceTarget = state.policeTarget?.userData.policePullOver?.complete === false
+        ? state.policeTarget
+        : null;
+      if (activePoliceTarget && (a === activePoliceTarget || b === activePoliceTarget)) {
+        const other = a === activePoliceTarget ? b : a;
+        if (!other.userData.player) continue;
+      }
       if (a.position.distanceTo(b.position) > COLLISION_BROAD_PHASE) continue;
       const hit = carCollision(a, b);
       if (!hit) continue;
