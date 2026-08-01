@@ -30,6 +30,8 @@ const botSensitivityEl = document.querySelector("#botSensitivity");
 const botSensitivityValueEl = document.querySelector("#botSensitivityValue");
 const trafficDensityEl = document.querySelector("#trafficDensity");
 const trafficDensityValueEl = document.querySelector("#trafficDensityValue");
+const policeInteractionEl = document.querySelector("#policeInteraction");
+const driverResponseEl = document.querySelector("#driverResponse");
 
 const clock = new THREE.Clock();
 const keys = new Set();
@@ -112,6 +114,8 @@ const state = {
   policeMode: false,
   policeTarget: null,
   policeSiren: null,
+  policeInterview: false,
+  policeConversation: null,
   botSensitivity: 0,
   trafficDensity: 1,
   trafficInitialized: false,
@@ -192,6 +196,7 @@ function init() {
   botSensitivityEl.addEventListener("input", updateBotSensitivity);
   trafficDensityEl.addEventListener("input", updateTrafficDensity);
   restartBtn.addEventListener("click", restartCity);
+  policeInteractionEl.addEventListener("click", onPoliceInteractionClick);
   updateBotSensitivity();
   updateTrafficDensity();
   loadingEl.hidden = true;
@@ -970,6 +975,12 @@ function updateTrafficLights() {
 function updatePlayer(dt) {
   const car = state.player;
   const data = car.userData;
+  if (state.policeInterview) {
+    data.speed = 0;
+    data.velocity.set(0, 0, 0);
+    data.braking = true;
+    return;
+  }
   if (data.immobilized || data.crashed || state.onFoot || state.carTransition) {
     data.revRatio = moveToward(data.revRatio || 0, 0, dt * 4.5);
     return;
@@ -1441,6 +1452,7 @@ function transferPlayerControl(target, message) {
 }
 
 function togglePoliceMode() {
+  if (state.policeInterview) return;
   if (state.onFoot || state.securityRoom || state.playerCrashed) return;
   if (state.policeMode) {
     disablePoliceMode();
@@ -1697,6 +1709,119 @@ function revealPulledOverDriver(car) {
   car.userData.loweredWindow = openWindow;
 }
 
+function togglePoliceInterview() {
+  if (state.policeInterview) {
+    endPoliceInterview();
+    return;
+  }
+  const target = state.policeTarget;
+  const stop = target?.userData.policePullOver;
+  if (!state.policeMode || !target || !stop?.complete) {
+    if (state.policeMode) statusEl.textContent = "Wait until the selected vehicle has fully pulled over";
+    return;
+  }
+  state.policeInterview = true;
+  document.body.classList.add("police-interview");
+  policeInteractionEl.hidden = false;
+  state.policeConversation = {
+    hasInsurance: Math.random() < 0.72,
+  };
+  showPoliceConversation(
+    "Driver: Good afternoon, officer. What seems to be the problem?",
+    [
+      ["release", "You are free to go"],
+      ["reason", "Do you know why I pulled you over?"],
+    ],
+  );
+  state.player.userData.speed = 0;
+  state.player.userData.velocity.set(0, 0, 0);
+}
+
+function showPoliceConversation(response, choices) {
+  driverResponseEl.textContent = response;
+  const actions = policeInteractionEl.querySelector(".interaction-actions");
+  actions.replaceChildren(...choices.slice(0, 2).map(([action, label]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.policeAction = action;
+    button.textContent = label;
+    return button;
+  }));
+}
+
+function onPoliceInteractionClick(event) {
+  const button = event.target.closest("[data-police-action]");
+  if (!button || !state.policeInterview) return;
+  const action = button.dataset.policeAction;
+  if (action === "release") {
+    endPoliceInterview();
+  } else if (action === "reason") {
+    showPoliceConversation(
+      "Driver: No, officer. I thought I was following the traffic rules.",
+      [["explain", "Explain the violation"], ["documents", "License, registration, and insurance"]],
+    );
+  } else if (action === "explain") {
+    showPoliceConversation(
+      "Driver: I understand. I did not realize I was driving that fast.",
+      [["documents", "Ask for documents"], ["warning", "Issue a warning"]],
+    );
+  } else if (action === "documents") {
+    if (state.policeConversation?.hasInsurance) {
+      showPoliceConversation(
+        "Driver: Here are my license, registration, and valid insurance card.",
+        [["speeding", "Issue $150 speeding fine"], ["warning", "Issue a warning"]],
+      );
+    } else {
+      showPoliceConversation(
+        "Driver: I have my license and registration, but I do not have insurance.",
+        [["insurance", "Issue $250 no-insurance fine"], ["warning", "Issue a warning"]],
+      );
+    }
+  } else if (action === "warning") {
+    showPoliceConversation("Driver: Thank you, officer. I will be more careful.", [["release", "You are free to go"]]);
+  } else if (action === "speeding") {
+    showPoliceConversation("Driver: I understand the $150 speeding fine. I will slow down.", [["release", "You are free to go"]]);
+  } else if (action === "insurance") {
+    showPoliceConversation("Driver: I understand the $250 fine. I will arrange insurance before driving again.", [["release", "You are free to go"]]);
+  }
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function endPoliceInterview() {
+  const target = state.policeTarget;
+  state.policeInterview = false;
+  document.body.classList.remove("police-interview");
+  policeInteractionEl.hidden = true;
+  state.policeConversation = null;
+  stopPoliceSiren();
+  if (target) {
+    const data = target.userData;
+    const forward = dirs[data.dir] || getForward(target).normalize();
+    const destination = target.position.clone().addScaledVector(forward, 18);
+    if (data.dir === "east") destination.z = nearestGrid(target.position.z) + LANES[1];
+    if (data.dir === "west") destination.z = nearestGrid(target.position.z) + LANES[0];
+    if (data.dir === "north") destination.x = nearestGrid(target.position.x) + LANES[0];
+    if (data.dir === "south") destination.x = nearestGrid(target.position.x) + LANES[1];
+    const mergePoint = target.position.clone().addScaledVector(forward, 9);
+    if (data.dir === "east" || data.dir === "west") mergePoint.z = THREE.MathUtils.lerp(target.position.z, destination.z, 0.58);
+    else mergePoint.x = THREE.MathUtils.lerp(target.position.x, destination.x, 0.58);
+    data.policePullOver = null;
+    data.policeRelease = { destination, mergePoint, phase: "merge", roadYaw: yawForDir(data.dir) };
+    data.hazard = false;
+    data.braking = false;
+    data.speed = 0;
+    data.velocity.set(0, 0, 0);
+    if (data.visiblePoliceDriver) target.remove(data.visiblePoliceDriver);
+    if (data.loweredWindow) target.remove(data.loweredWindow);
+    data.visiblePoliceDriver = null;
+    data.loweredWindow = null;
+  }
+  state.policeTarget = null;
+  statusEl.textContent = "Traffic stop ended — driver returning to traffic";
+  renderer.domElement.focus();
+}
+
 function startPoliceSiren() {
   stopPoliceSiren();
   const audio = ensureAudio();
@@ -1730,6 +1855,10 @@ function updateBots(dt) {
   for (const bot of cars) {
     const data = bot.userData;
     if (data.player || data.immobilized || data.crashed) continue;
+    if (data.policeRelease) {
+      updateReleasedPoliceTarget(bot, dt);
+      continue;
+    }
     if (data.policePullOver) continue;
     if (data.waitingForEntry) {
       if (canSpawnBotAt(data.waitingForEntry, bot)) {
@@ -1852,6 +1981,50 @@ function updateBots(dt) {
     }
     if (avoidance) resolveBuildingCollisions(bot, previous);
     wrapBot(bot);
+  }
+}
+
+function updateReleasedPoliceTarget(bot, dt) {
+  const data = bot.userData;
+  const release = data.policeRelease;
+  const targetPoint = release.phase === "merge" ? release.mergePoint : release.destination;
+  const delta = targetPoint.clone().sub(bot.position);
+  const distance = delta.length();
+  if (distance <= 0.9 && release.phase === "merge") {
+    release.phase = "lane";
+    return;
+  }
+  if (distance <= 0.7) {
+    bot.rotation.y = lerpAngle(bot.rotation.y, release.roadYaw, Math.min(1, dt * 3.2));
+    const angleRemaining = Math.abs(Math.atan2(
+      Math.sin(release.roadYaw - bot.rotation.y),
+      Math.cos(release.roadYaw - bot.rotation.y),
+    ));
+    if (angleRemaining > 0.02) {
+      data.speed = moveToward(data.speed, 2.5, dt * 5);
+      data.velocity.copy(getForward(bot)).multiplyScalar(data.speed);
+      return;
+    }
+    data.policeRelease = null;
+    data.speed = 4;
+    data.velocity.copy(dirs[data.dir]).multiplyScalar(data.speed);
+    data.braking = false;
+    return;
+  }
+  delta.normalize();
+  const desiredYaw = Math.atan2(delta.x, delta.z);
+  bot.rotation.y = lerpAngle(bot.rotation.y, desiredYaw, Math.min(1, dt * 1.45));
+  data.speed = moveToward(data.speed, 5.5, dt * 5);
+  const forward = getForward(bot).normalize();
+  data.velocity.copy(forward).multiplyScalar(data.speed);
+  const candidate = bot.position.clone().addScaledVector(data.velocity, dt);
+  if (!botMovementBlocked(bot, candidate)) {
+    bot.position.copy(candidate);
+    data.braking = false;
+  } else {
+    data.speed = 0;
+    data.velocity.set(0, 0, 0);
+    data.braking = true;
   }
 }
 
@@ -3406,6 +3579,14 @@ function setBrakeLights(lamps, active) {
 
 function updateCamera(dt) {
   const car = state.player;
+  if (state.policeInterview && state.policeTarget) {
+    const target = state.policeTarget;
+    const closePosition = target.localToWorld(new THREE.Vector3(4.2, 2.15, -0.15));
+    const windowPosition = target.localToWorld(new THREE.Vector3(0.95, 1.48, -0.18));
+    camera.position.lerp(closePosition, 1 - Math.pow(0.0005, dt));
+    camera.lookAt(windowPosition);
+    return;
+  }
   if (state.onFoot && state.pedestrian) {
     const person = state.pedestrian;
     const walkForward = new THREE.Vector3(Math.sin(person.rotation.y), 0, Math.cos(person.rotation.y));
@@ -3455,8 +3636,8 @@ function updateHud() {
       ? "POLICE MODE — click a bot car to initiate a stop"
       : stop.complete
         ? state.policeSiren
-          ? "Vehicle pulled over — driver window lowered — press O to stop siren"
-          : "Vehicle pulled over — driver window lowered"
+          ? "Vehicle pulled over — press 1 to speak with driver — O stops siren"
+          : "Vehicle pulled over — press 1 to speak with driver"
         : state.time < stop.acknowledgeUntil
           ? "Target acknowledged — hazards on"
           : "Target pulling over to player lane";
@@ -3470,11 +3651,11 @@ function onKeyDown(event) {
   if (!key) return;
   ensureAudio();
   keys.add(key);
-  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "space", "q", "e", "z", "c", "h", "p", "o"].includes(key)) {
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "space", "q", "e", "z", "c", "h", "p", "o", "1"].includes(key)) {
     event.preventDefault();
     event.stopPropagation();
   }
-  if (event.repeat && ["q", "e", "z", "c", "h", "p", "o"].includes(key)) return;
+  if (event.repeat && ["q", "e", "z", "c", "h", "p", "o", "1"].includes(key)) return;
   if (key === "escape" && state.securityRoom) {
     state.securitySelected = null;
     event.preventDefault();
@@ -3487,11 +3668,12 @@ function onKeyDown(event) {
   if (key === "c") toggleCarExit();
   if (key === "h" && !state.onFoot && !state.securityRoom) startPlayerHorn();
   if (key === "p") togglePoliceMode();
+  if (key === "1") togglePoliceInterview();
   if (key === "o" && state.policeSiren) {
     stopPoliceSiren();
     statusEl.textContent = "Police siren off";
   }
-  if (["q", "e", "z", "c", "h", "p", "o"].includes(key)) state.toggleHeld.add(key);
+  if (["q", "e", "z", "c", "h", "p", "o", "1"].includes(key)) state.toggleHeld.add(key);
 }
 
 function onKeyPress(event) {
@@ -3518,6 +3700,10 @@ function onKeyUp(event) {
 function onPointerDown(event) {
   renderer.domElement.focus();
   ensureAudio();
+  if (state.policeInterview) {
+    event.preventDefault();
+    return;
+  }
   if (state.securityRoom) {
     const rect = renderer.domElement.getBoundingClientRect();
     const column = THREE.MathUtils.clamp(Math.floor(((event.clientX - rect.left) / rect.width) * 5), 0, 4);
@@ -3566,6 +3752,8 @@ function normalizeKey(event) {
     KeyH: "h",
     KeyP: "p",
     KeyO: "o",
+    Digit1: "1",
+    Numpad1: "1",
     Space: "space",
     Escape: "escape",
   };
@@ -3851,6 +4039,10 @@ function restartCity() {
   state.policeMode = false;
   state.policeTarget = null;
   state.policeSiren = null;
+  state.policeInterview = false;
+  state.policeConversation = null;
+  document.body.classList.remove("police-interview");
+  policeInteractionEl.hidden = true;
   if (state.pedestrian) city.remove(state.pedestrian);
   if (state.carBeacon) city.remove(state.carBeacon);
   if (state.crashMeeting?.arrow) city.remove(state.crashMeeting.arrow);

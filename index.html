@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DriveNow</title>
-    <link rel="stylesheet" href="./styles.css?v=2" />
+    <link rel="stylesheet" href="./styles.css?v=3" />
   </head>
   <body>
     <div id="hud">
@@ -32,6 +32,15 @@
     </div>
     <button id="restart" type="button" hidden>Restart city</button>
     <div id="loading">Loading city...</div>
+    <section id="policeInteraction" hidden aria-label="Traffic stop interaction">
+      <div class="interaction-title">DRIVER WINDOW</div>
+      <div id="driverResponse" class="driver-response">Driver: Good afternoon, officer.</div>
+      <div class="interaction-actions">
+        <button type="button" data-police-action="release">You are free to go</button>
+        <button type="button" data-police-action="reason">Do you know why I pulled you over?</button>
+      </div>
+      <div class="interaction-hint">Press 1 again to end the stop</div>
+    </section>
     <script type="importmap">
       {
         "imports": {
@@ -39,6 +48,6 @@
         }
       }
     </script>
-    <script type="module" src="./src/main.js?v=127"></script>
+    <script type="module" src="./src/main.js?v=129"></script>
   </body>
 </html>
