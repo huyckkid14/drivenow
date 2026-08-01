@@ -2025,7 +2025,8 @@ function updateReleasedPoliceTarget(bot, dt) {
   const forward = getForward(bot).normalize();
   data.velocity.copy(forward).multiplyScalar(data.speed);
   const candidate = bot.position.clone().addScaledVector(data.velocity, dt);
-  if (!botMovementBlocked(bot, candidate)) {
+  const blockingCar = findBotMovementBlocker(bot, candidate);
+  if (!blockingCar) {
     bot.position.copy(candidate);
     data.braking = false;
     release.blockedFor = 0;
@@ -2033,9 +2034,9 @@ function updateReleasedPoliceTarget(bot, dt) {
     data.speed = 0;
     data.velocity.set(0, 0, 0);
     data.braking = true;
-    const blockingTraffic = findNearestCarAhead(bot, 8);
-    const waitingForRed = isWaitingAtRedLight(bot) || Boolean(
-      blockingTraffic?.car && isWaitingAtRedLight(blockingTraffic.car),
+    const sameDirection = blockingCar.userData.dir === data.dir;
+    const waitingForRed = sameDirection && (
+      isWaitingAtRedLight(bot) || isWaitingAtRedLight(blockingCar)
     );
     release.blockedFor = waitingForRed ? 0 : release.blockedFor + dt;
     if (!waitingForRed && release.blockedFor > 0.45) {
@@ -2156,6 +2157,10 @@ function policeClearanceMovementBlocked(bot, candidate) {
 }
 
 function botMovementBlocked(bot, candidate) {
+  return Boolean(findBotMovementBlocker(bot, candidate));
+}
+
+function findBotMovementBlocker(bot, candidate) {
   const forward = getForward(bot).normalize();
   const right = new THREE.Vector3(forward.z, 0, -forward.x);
   const candidateBox = {
@@ -2182,9 +2187,9 @@ function botMovementBlocked(bot, candidate) {
         break;
       }
     }
-    if (overlaps) return true;
+    if (overlaps) return other;
   }
-  return false;
+  return null;
 }
 
 function updateBotSensitivity() {
