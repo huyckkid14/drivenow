@@ -39,6 +39,7 @@ const damagePieces = [];
 const exhaustSmoke = [];
 const npcPedestrians = [];
 const crashResponders = [];
+const hijackedDrivers = [];
 const securityCameras = [];
 const buildingObstacles = [];
 const botSpawnCandidates = [];
@@ -1283,6 +1284,21 @@ function toggleCarExit() {
     statusEl.textContent = "Security feeds — C to exit";
     return;
   }
+  if (state.onFoot) {
+    const nearCurrentCar = person.position.distanceTo(car.position) <= 3.3;
+    if (!nearCurrentCar) {
+      const abandonedTarget = findAbandonedCarTarget(person.position);
+      if (abandonedTarget) {
+        transferPlayerControl(abandonedTarget, "Original car reclaimed — drive!");
+        return;
+      }
+      const hijackTarget = findHijackTarget(person.position);
+      if (hijackTarget) {
+        hijackBotCar(hijackTarget);
+        return;
+      }
+    }
+  }
   if (!state.onFoot) {
     if (Math.abs(car.userData.speed) > 0.35) {
       statusEl.textContent = "Stop the car before getting out";
@@ -1309,6 +1325,106 @@ function toggleCarExit() {
   person.userData.speed = 0;
   person.userData.steer = 0;
   statusEl.textContent = "Opening door…";
+}
+
+function findHijackTarget(position) {
+  let closest = null;
+  let closestDistance = 3.7;
+  for (const car of cars) {
+    const data = car.userData;
+    if (data.player || data.abandonedPlayerCar || data.crashed || data.immobilized || data.waitingForEntry) continue;
+    if (Math.abs(data.speed || 0) > 0.55) continue;
+    const distance = car.position.distanceTo(position);
+    if (distance >= closestDistance) continue;
+    closest = car;
+    closestDistance = distance;
+  }
+  return closest;
+}
+
+function findAbandonedCarTarget(position) {
+  let closest = null;
+  let closestDistance = 3.7;
+  for (const car of cars) {
+    const data = car.userData;
+    if (!data.abandonedPlayerCar || data.crashed || data.waitingForEntry) continue;
+    const distance = car.position.distanceTo(position);
+    if (distance >= closestDistance) continue;
+    closest = car;
+    closestDistance = distance;
+  }
+  return closest;
+}
+
+function hijackBotCar(target) {
+  const driver = makeNpcPedestrian(200 + hijackedDrivers.length);
+  const ejectionPoint = new THREE.Vector3(2.15, 0.38, -0.15);
+  target.localToWorld(ejectionPoint);
+  driver.position.copy(ejectionPoint);
+  driver.rotation.y = target.rotation.y;
+  driver.rotation.x = -Math.PI / 2;
+  driver.userData.leftArm.rotation.x = -0.72;
+  driver.userData.rightArm.rotation.x = 0.66;
+  driver.userData.leftLeg.rotation.x = 0.18;
+  driver.userData.rightLeg.rotation.x = -0.12;
+  driver.userData.fallenUntil = Infinity;
+  city.add(driver);
+  hijackedDrivers.push(driver);
+
+  transferPlayerControl(target, "Car hijacked — drive!");
+}
+
+function transferPlayerControl(target, message) {
+  const oldPlayer = state.player;
+  const pedestrian = state.pedestrian;
+  const oldData = oldPlayer.userData;
+  const targetData = target.userData;
+
+  const playerMarker = oldPlayer.children.find((child) => child.geometry?.type === "ConeGeometry" && child.position.y > 2);
+  if (playerMarker) {
+    oldPlayer.remove(playerMarker);
+    target.add(playerMarker);
+  }
+
+  oldData.player = false;
+  oldData.abandonedPlayerCar = true;
+  oldData.immobilized = true;
+  oldData.speed = 0;
+  oldData.velocity.set(0, 0, 0);
+  oldData.hazard = true;
+
+  targetData.player = true;
+  targetData.abandonedPlayerCar = false;
+  targetData.speed = 0;
+  targetData.maxSpeed = 30;
+  targetData.steer = 0;
+  targetData.velocity.set(0, 0, 0);
+  targetData.angularVelocity = 0;
+  targetData.revRatio = 0;
+  targetData.revSmokeTimer = 0;
+  targetData.driftRatio = 0;
+  targetData.driftSmokeTimer = 0;
+  targetData.lastSafe = target.position.clone();
+  targetData.braking = false;
+  targetData.hazard = false;
+  targetData.immobilized = false;
+
+  state.player = target;
+  state.onFoot = false;
+  state.playerCrashed = false;
+  state.crashed = false;
+  state.signal = "off";
+  state.hazard = false;
+  state.crashLook.active = false;
+  state.carTransition = null;
+  state.doorMotionStart = state.time - 1.19;
+  if (targetData.driverDoor) targetData.driverDoor.rotation.y = -1.05;
+  pedestrian.userData.velocity.set(0, 0, 0);
+  pedestrian.userData.speed = 0;
+  pedestrian.visible = false;
+  state.carBeacon.visible = false;
+  restartBtn.hidden = true;
+  statusEl.textContent = message;
 }
 
 function updateBots(dt) {
@@ -1422,6 +1538,7 @@ function getPedestrianYield(bot) {
   for (const responder of crashResponders) {
     if (responder.person?.visible) people.push(responder.person);
   }
+  people.push(...hijackedDrivers);
   for (const person of people) {
     const delta = person.position.clone().sub(bot.position);
     const ahead = delta.dot(forward);
@@ -3253,6 +3370,8 @@ function restartCity() {
   for (const responder of crashResponders) {
     if (responder.person) city.remove(responder.person);
   }
+  for (const driver of hijackedDrivers) city.remove(driver);
+  hijackedDrivers.length = 0;
   crashResponders.length = 0;
   state.crashMeeting = null;
   for (const car of cars) {

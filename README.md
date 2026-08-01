@@ -41,6 +41,8 @@ A static Three.js mini city driving game for GitHub Pages.
 - Crash drivers first use expanded path searches around their own car, other wrecks, and buildings. They switch to direct no-stop movement only when no route exists, while active bot traffic treats them as pedestrians and yields or reverses.
 - If a planned first step remains blocked for 0.32 seconds, the driver forcibly enters direct mode for 2.8 seconds, preventing an immobilized car from causing an endless re-planning loop.
 - Press C after a player crash to exit the wreck and continue on foot without resetting. A wrecked or immobilized car cannot be re-entered, but the restart button remains available.
+- Localhost hijacking: while walking, press C within 3.7 units of a stationary bot car. Its driver is kicked out and remains collapsed beside the door, the original player car is abandoned, and driving control transfers immediately to the stolen car.
+- Abandoned player cars remain reclaimable: exit the current vehicle, walk back within 3.7 units of an earlier player car, and press C to transfer control back to it.
 - Bots continuously match the car ahead with a small bumper gap and slow to a controlled entry speed before every intersection.
 - Dense road positions are used only for initial population; replacement traffic enters exclusively from clear city-boundary lanes.
 - Off-map cars and vehicles in crossing or adjacent lanes are excluded from following and intersection-occupancy checks.
