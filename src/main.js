@@ -1958,9 +1958,10 @@ function updateBots(dt) {
     const queueAvoidance = pedestrianAvoidance ? null : getQueueReverse(bot, frontTraffic);
     const avoidance = pedestrianAvoidance || queueAvoidance || (sensitivity > 0 ? getPlayerAvoidance(bot, sensitivity, dt) : null);
     data.pedestrianBacking = Boolean(avoidance?.reverseForPedestrian);
+    const intersectionBackOut = stopInfoForIntersectionBackOut(bot, frontTraffic);
     const signalStop = stopInfoForSignal(bot);
-    const boxStop = signalStop ? null : stopInfoForBlockedIntersection(bot, frontTraffic);
-    const intersectionStop = signalStop || boxStop;
+    const boxStop = signalStop || intersectionBackOut ? null : stopInfoForBlockedIntersection(bot, frontTraffic);
+    const intersectionStop = intersectionBackOut || signalStop || boxStop;
     const intersectionBlocked = Boolean(intersectionStop);
     const followingSpeed = followingTargetSpeed(bot, frontTraffic);
     const approachSpeed = intersectionApproachSpeed(bot);
@@ -1968,7 +1969,9 @@ function updateBots(dt) {
     const redApproachSpeed = signalStop ? stopLineApproachSpeed(signalStop) : cruisingSpeed;
     const targetSpeed = avoidance
       ? avoidance.speed
-      : signalStop
+      : intersectionBackOut
+        ? 0
+        : signalStop
         ? Math.min(followingSpeed, redApproachSpeed)
         : boxStop ? 0 : cruisingSpeed;
     const tightGap = frontTraffic && frontTraffic.gap <= BOT_BUMPER_GAP + 1.1;
@@ -2242,6 +2245,9 @@ function getPedestrianYield(bot) {
     const lateral = Math.abs(delta.dot(right));
     if (ahead >= -1.2 && ahead <= stoppingRange && lateral <= CAR_HALF_WIDTH + 1.05) {
       if (ahead <= CAR_HALF_LENGTH + 4.2) {
+        if (!pedestrianReverseStaysOutOfIntersection(bot)) {
+          return { direction: forward.clone(), speed: 0 };
+        }
         return {
           direction: forward.clone().multiplyScalar(-1),
           speed: 2.8,
@@ -2256,11 +2262,26 @@ function getPedestrianYield(bot) {
 
 function getQueueReverse(bot, frontTraffic) {
   if (!frontTraffic || !frontTraffic.car.userData.pedestrianBacking || frontTraffic.gap > 6.5) return null;
+  if (!pedestrianReverseStaysOutOfIntersection(bot)) {
+    return { direction: dirs[bot.userData.dir].clone(), speed: 0 };
+  }
   return {
     direction: dirs[bot.userData.dir].clone().multiplyScalar(-1),
     speed: 2.8,
     reverseForPedestrian: true,
   };
+}
+
+function pedestrianReverseStaysOutOfIntersection(bot) {
+  const reverse = dirs[bot.userData.dir].clone().multiplyScalar(-1);
+  const candidate = bot.position.clone().addScaledVector(reverse, 0.45);
+  const ix = nearestGrid(candidate.x);
+  const iz = nearestGrid(candidate.z);
+  const bodyMargin = ROAD_HALF + CAR_HALF_LENGTH + 0.2;
+  return !(
+    Math.abs(candidate.x - ix) < bodyMargin &&
+    Math.abs(candidate.z - iz) < bodyMargin
+  );
 }
 
 function updateTrafficDensity() {
@@ -2483,12 +2504,15 @@ function stopInfoForSignal(bot) {
   const stopCenter = stopCenterForDirection(ix, iz, data.dir);
   const toStop = stopCenter.clone().sub(bot.position);
   const ahead = toStop.dot(forward);
-  if (ahead > STOP_DISTANCE || ahead < -CAR_HALF_LENGTH - 0.9) return null;
+  // Keep control of a car that has crossed the paint so it can reverse back
+  // to the stop line while the light is still red.
+  const intersectionBackOutRange = ROAD_HALF * 2 + CAR_HALF_LENGTH + 0.8;
+  if (ahead > STOP_DISTANCE || ahead < -intersectionBackOutRange) return null;
   const laneAligned = axis === "ew" ? Math.abs(bot.position.z - iz) < ROAD_HALF : Math.abs(bot.position.x - ix) < ROAD_HALF;
   if (!laneAligned) return null;
   const light = trafficLights.find((item) => item.x === ix && item.z === iz && item.axis === axis);
   if (!light || light.state === "green") return null;
-  return { stopCenter, forward, ahead };
+  return { stopCenter, forward, ahead, clearingIntersection: ahead < -0.1 };
 }
 
 function stopInfoForBlockedIntersection(bot, frontTraffic) {
@@ -2507,6 +2531,27 @@ function stopInfoForBlockedIntersection(bot, frontTraffic) {
   const clearIntersectionDistance = ahead + ROAD_HALF * 2 + CAR_HALF_LENGTH * 2 + BOT_BUMPER_GAP;
   if (frontTraffic.ahead > clearIntersectionDistance) return null;
   return { stopCenter, forward, ahead };
+}
+
+function stopInfoForIntersectionBackOut(bot, frontTraffic) {
+  const data = bot.userData;
+  if (Math.abs(data.speed || 0) > 0.9) return null;
+  const forward = dirs[data.dir];
+  const ix = nearestGrid(bot.position.x);
+  const iz = nearestGrid(bot.position.z);
+  const insideMargin = ROAD_HALF + CAR_HALF_LENGTH;
+  if (Math.abs(bot.position.x - ix) >= insideMargin || Math.abs(bot.position.z - iz) >= insideMargin) return null;
+
+  const stoppedAhead = frontTraffic && (
+    frontTraffic.gap <= BOT_BUMPER_GAP + 2.4 ||
+    Math.max(0, carVelocity(frontTraffic.car).dot(forward)) < 0.8
+  );
+  if (!stoppedAhead && !botMovementBlocked(bot, bot.position.clone().addScaledVector(forward, 0.35))) return null;
+
+  const stopCenter = stopCenterForDirection(ix, iz, data.dir);
+  const ahead = stopCenter.clone().sub(bot.position).dot(forward);
+  if (ahead >= -0.1) return null;
+  return { stopCenter, forward, ahead, clearingIntersection: true };
 }
 
 function stopLineApproachSpeed(stop) {
@@ -2552,12 +2597,29 @@ function alignWithStopLine(bot, stop, dt, previous, canCreep) {
     data.speed = 0;
     data.velocity.set(0, 0, 0);
     data.braking = true;
+    return;
+  }
+
+  if (stop.clearingIntersection) {
+    // If a queue behind makes returning to the white line impossible, clear
+    // the conflict box forward rather than remaining stopped in cross traffic.
+    const escapeSpeed = 3.2;
+    const candidate = bot.position.clone().addScaledVector(stop.forward, escapeSpeed * dt);
+    if (!botMovementBlocked(bot, candidate)) {
+      bot.position.copy(candidate);
+      data.speed = escapeSpeed;
+      data.velocity.copy(stop.forward).multiplyScalar(escapeSpeed);
+      data.braking = false;
+    }
   }
 }
 
 function canBackUpToStopLine(bot, stop) {
   const needed = stop.stopCenter.distanceTo(bot.position);
-  if (needed > 2.5) return false;
+  const maximumReverse = stop.clearingIntersection
+    ? ROAD_HALF * 2 + CAR_HALF_LENGTH + 0.8
+    : ROAD_HALF + 0.5;
+  if (needed > maximumReverse) return false;
   for (const other of collidableCars) {
     if (other === bot || other.userData.immobilized) continue;
     const delta = other.position.clone().sub(bot.position);
@@ -2883,6 +2945,10 @@ function updateCollisions(dt) {
       if (a.position.distanceTo(b.position) > COLLISION_BROAD_PHASE) continue;
       const hit = carCollision(a, b);
       if (!hit) continue;
+      if (a.userData.immobilized || b.userData.immobilized) {
+        resolveImmovableCarContact(a, b, hit);
+        continue;
+      }
       if (!a.userData.player && !b.userData.player) {
         if (a.userData.crashed || b.userData.crashed) {
           applyCrashImpulse(a, b, dt, hit);
@@ -2894,6 +2960,25 @@ function updateCollisions(dt) {
       applyCrashImpulse(a, b, dt, hit);
     }
   }
+}
+
+function resolveImmovableCarContact(a, b, hit) {
+  const fixed = a.userData.immobilized ? a : b;
+  const moving = fixed === a ? b : a;
+  const impactSpeed = carVelocity(moving).sub(carVelocity(fixed)).length();
+  if (impactSpeed > 0.7) playCrashSound(THREE.MathUtils.clamp(impactSpeed / 18, 0.18, 0.82));
+
+  const separation = hit.depth + 0.1;
+  if (fixed === a) moving.position.addScaledVector(hit.normal, -separation);
+  else moving.position.addScaledVector(hit.normal, separation);
+
+  fixed.userData.speed = 0;
+  fixed.userData.velocity.set(0, 0, 0);
+  fixed.userData.angularVelocity = 0;
+  fixed.userData.braking = true;
+  moving.userData.speed = 0;
+  moving.userData.velocity.set(0, 0, 0);
+  moving.userData.braking = true;
 }
 
 function resolveBotContact(a, b, hit) {
