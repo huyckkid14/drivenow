@@ -1965,7 +1965,12 @@ function updateBots(dt) {
     const followingSpeed = followingTargetSpeed(bot, frontTraffic);
     const approachSpeed = intersectionApproachSpeed(bot);
     const cruisingSpeed = Math.min(data.desiredSpeed, followingSpeed, approachSpeed);
-    const targetSpeed = avoidance ? avoidance.speed : intersectionBlocked ? 0 : cruisingSpeed;
+    const redApproachSpeed = signalStop ? stopLineApproachSpeed(signalStop) : cruisingSpeed;
+    const targetSpeed = avoidance
+      ? avoidance.speed
+      : signalStop
+        ? Math.min(followingSpeed, redApproachSpeed)
+        : boxStop ? 0 : cruisingSpeed;
     const tightGap = frontTraffic && frontTraffic.gap <= BOT_BUMPER_GAP + 1.1;
     const rate = targetSpeed < data.speed ? (intersectionBlocked || tightGap ? 34 : 26) : 7;
     data.braking = targetSpeed < data.speed - 0.5;
@@ -2490,6 +2495,10 @@ function stopInfoForBlockedIntersection(bot, frontTraffic) {
   if (!frontTraffic) return null;
   const data = bot.userData;
   const forward = dirs[data.dir];
+  const leadForwardSpeed = Math.max(0, carVelocity(frontTraffic.car).dot(forward));
+  // A moving lead car is actively clearing the box. Only hold at a green
+  // light when traffic beyond the intersection is actually queued or stopped.
+  if (leadForwardSpeed > 1.2) return null;
   const ix = nearestGrid(bot.position.x);
   const iz = nearestGrid(bot.position.z);
   const stopCenter = stopCenterForDirection(ix, iz, data.dir);
@@ -2498,6 +2507,13 @@ function stopInfoForBlockedIntersection(bot, frontTraffic) {
   const clearIntersectionDistance = ahead + ROAD_HALF * 2 + CAR_HALF_LENGTH * 2 + BOT_BUMPER_GAP;
   if (frontTraffic.ahead > clearIntersectionDistance) return null;
   return { stopCenter, forward, ahead };
+}
+
+function stopLineApproachSpeed(stop) {
+  if (stop.ahead <= 0.12) return 0;
+  // Continue toward the painted line under control instead of braking to a
+  // full stop as soon as the signal enters the 13.5-unit detection range.
+  return THREE.MathUtils.clamp(stop.ahead * 1.55, 1.25, 7.5);
 }
 
 function stopCenterForDirection(ix, iz, dir) {
