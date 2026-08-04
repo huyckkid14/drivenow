@@ -3917,6 +3917,7 @@ function updateHud() {
   state.player.userData.cockpit.visible = dashboardVisible;
   state.player.userData.cabin.visible = !dashboardVisible;
   state.player.userData.playerMarker.visible = !dashboardVisible;
+  if (state.player.userData.policeKit) state.player.userData.policeKit.visible = !dashboardVisible;
   if (dashboardVisible) {
     const data = state.player.userData;
     const speedRatio = THREE.MathUtils.clamp(Math.abs(data.speed || 0) / 36, 0, 1);
@@ -3966,11 +3967,22 @@ function updateCockpitDisplay(speed, rpm, leftActive = false, rightActive = fals
   const context = canvas.getContext("2d");
   context.fillStyle = "#05090b";
   context.fillRect(0, 0, canvas.width, canvas.height);
+  if (state.policeMode) {
+    context.fillStyle = "#e32636";
+    context.fillRect(0, 0, canvas.width / 2, 18);
+    context.fillStyle = "#247cff";
+    context.fillRect(canvas.width / 2, 0, canvas.width / 2, 18);
+    context.fillStyle = "#eaf5ff";
+    context.font = "bold 22px system-ui";
+    context.textAlign = "center";
+    context.fillText("POLICE PATROL", 256, 46);
+    context.textAlign = "start";
+  }
   context.fillStyle = leftActive ? "#ffb000" : "#36444a";
   context.font = "bold 54px system-ui";
-  context.fillText("◀", 28, 86);
+  context.fillText("◀", 28, state.policeMode ? 104 : 86);
   context.fillStyle = rightActive ? "#ffb000" : "#36444a";
-  context.fillText("▶", 420, 86);
+  context.fillText("▶", 420, state.policeMode ? 104 : 86);
   context.fillStyle = "#f4fbff";
   context.font = "bold 104px system-ui";
   context.textAlign = "center";
