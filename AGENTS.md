@@ -27,6 +27,9 @@
 ## Simulation rules
 
 - Preserve the existing city, buildings, race area, player-only lanes, security cameras, pedestrians, audio, traffic controls, and driving controls unless the user explicitly requests a redesign.
+- Keep the `SECURITY CAMERA ROOM` entrance sign outside the building and facing outward so approaching pedestrians can read it.
+- Preserve the three driving camera modes: normal chase, hood, and a true 3D cockpit. The cockpit must use car-attached geometry rather than a screen overlay, keep the road visible, include live instruments and side mirrors, and support mouse-look around the cabin.
+- Exterior-only vehicle parts, including the player marker and police lightbar equipment, must not obstruct the cockpit camera. Police cockpit mode should retain its in-car patrol display while the full police equipment remains visible from exterior views.
 - Player-only lanes must remain usable by the player and unavailable to ordinary bots.
 - Bots should avoid spawning or moving into another vehicle. Fix collision causes rather than muting genuine collision sounds.
 - Reverse behavior means physical backward movement without rotating the car to face backward.
@@ -45,6 +48,8 @@
 - `Q` / `E`: turn signals.
 - `Z`: hazards.
 - `C`: enter/exit cars and context interactions.
+- `D`: cycle normal, hood, and 3D cockpit camera views.
+- Mouse movement: look around while using the 3D cockpit view.
 - `H`: hold the horn.
 - `P`: toggle police mode.
 - `O`: stop the police siren.

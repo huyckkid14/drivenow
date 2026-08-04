@@ -476,7 +476,8 @@ function createSecurityCameraRoom() {
     new THREE.PlaneGeometry(13, 2.05),
     new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(signCanvas) }),
   );
-  sign.position.set(72, 5.35, 10.88);
+  sign.position.set(72, 5.35, 10.76);
+  sign.rotation.y = Math.PI;
   buildings.add(sign);
 
   const beacon = new THREE.PointLight(0x4dd9ff, 18, 12);
