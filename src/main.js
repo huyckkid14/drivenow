@@ -126,7 +126,7 @@ const state = {
   policeConversation: null,
   introActive: document.documentElement.dataset.intro === "new",
   cameraView: 0,
-  cockpitLook: { yaw: 0, pitch: 0 },
+  cockpitLook: { yaw: 0, pitch: 0, lastMovedAt: -Infinity },
   botSensitivity: 0,
   trafficDensity: 1,
   trafficInitialized: false,
@@ -1263,6 +1263,7 @@ function beginCarStep(transition) {
     state.cameraView = 0;
     state.cockpitLook.yaw = 0;
     state.cockpitLook.pitch = 0;
+    state.cockpitLook.lastMovedAt = -Infinity;
     state.onFoot = true;
     person.position.copy(transition.seatPoint);
     person.rotation.y = car.rotation.y;
@@ -3919,6 +3920,10 @@ function updateCamera(dt) {
   }
   if (state.cameraView > 0) {
     const hoodView = state.cameraView === 1;
+    if (!hoodView && state.time - state.cockpitLook.lastMovedAt >= 3) {
+      state.cockpitLook.yaw = moveToward(state.cockpitLook.yaw, 0, dt * 0.92);
+      state.cockpitLook.pitch = moveToward(state.cockpitLook.pitch, 0, dt * 0.68);
+    }
     const cameraLocal = hoodView
       ? new THREE.Vector3(0, 1.72, 1.15)
       : new THREE.Vector3(0.34, 1.7, -0.62);
@@ -4095,6 +4100,7 @@ function onKeyDown(event) {
     state.cameraView = (state.cameraView + 1) % 3;
     state.cockpitLook.yaw = 0;
     state.cockpitLook.pitch = 0;
+    state.cockpitLook.lastMovedAt = state.time;
     const viewName = ["Normal view", "Hood view", "Dashboard view"][state.cameraView];
     statusEl.textContent = `${viewName} — D changes view`;
   }
@@ -4163,6 +4169,7 @@ function onPointerMove(event) {
     const y = THREE.MathUtils.clamp(((event.clientY - rect.top) / rect.height) * 2 - 1, -1, 1);
     state.cockpitLook.yaw = -x * 1.42;
     state.cockpitLook.pitch = y * 0.34;
+    state.cockpitLook.lastMovedAt = state.time;
     return;
   }
   if (!state.crashLook.active) return;
@@ -4511,6 +4518,7 @@ function restartCity() {
   state.cameraView = 0;
   state.cockpitLook.yaw = 0;
   state.cockpitLook.pitch = 0;
+  state.cockpitLook.lastMovedAt = -Infinity;
   state.greenBlockTimer = 0;
   state.doorMotionStart = -10;
   state.carTransition = null;
