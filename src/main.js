@@ -606,6 +606,8 @@ function createPlayer() {
     revSmokeTimer: 0,
     driftRatio: 0,
     driftSmokeTimer: 0,
+    driveDamage: 0,
+    damagePull: 0,
     indicators: player.userData.indicators,
     brakeLights: player.userData.brakeLights,
     driverDoor: player.userData.driverDoor,
@@ -1129,13 +1131,19 @@ function updatePlayer(dt) {
     data.braking = true;
     return;
   }
+  const throttle = keys.has("arrowup") ? 1 : 0;
+  const brakeKey = keys.has("arrowdown") ? 1 : 0;
+  if (data.player && data.immobilized && state.playerCrashed && (throttle || brakeKey) && !state.onFoot) {
+    data.immobilized = false;
+    data.limpMode = true;
+    statusEl.textContent = "Wrecked car moving in limp mode — reduced power and unstable handling";
+  }
   if (data.immobilized || data.crashed || state.onFoot || state.carTransition) {
     data.revRatio = moveToward(data.revRatio || 0, 0, dt * 4.5);
     return;
   }
 
-  const throttle = keys.has("arrowup") ? 1 : 0;
-  const brakeKey = keys.has("arrowdown") ? 1 : 0;
+  const damage = data.limpMode ? THREE.MathUtils.clamp(data.driveDamage || 0.35, 0.35, 1) : 0;
   const handbrake = keys.has("space") && Math.abs(data.speed) > 7;
   const stationaryRev = Boolean(throttle && brakeKey && Math.abs(data.speed) < 0.35);
   data.revRatio = moveToward(data.revRatio || 0, stationaryRev ? 1 : 0, dt * (stationaryRev ? 2.8 : 4.5));
@@ -1149,12 +1157,16 @@ function updatePlayer(dt) {
     }
   }
   const steerInput = (keys.has("arrowleft") ? 1 : 0) - (keys.has("arrowright") ? 1 : 0);
-  data.steer = moveToward(data.steer, steerInput, dt * 4.8);
+  const damagedPull = damage
+    ? (data.damagePull || 1) * damage * 0.12 + Math.sin(state.time * 2.4) * damage * 0.1
+    : 0;
+  data.steer = moveToward(data.steer, THREE.MathUtils.clamp(steerInput + damagedPull, -1, 1), dt * (4.8 - damage * 1.9));
   data.driftRatio = moveToward(data.driftRatio || 0, handbrake ? 1 : 0, dt * (handbrake ? 4.2 : 2.6));
 
-  const accel = stationaryRev ? 0 : throttle * 18;
-  const brake = stationaryRev ? 0 : brakeKey * (data.speed > 0.2 ? 34 : 13);
-  const drag = 4.2 + Math.abs(data.speed) * 0.1;
+  const damagedPowerPulse = damage ? 0.48 + (Math.sin(state.time * 7.2) * 0.5 + 0.5) * 0.3 : 1;
+  const accel = stationaryRev ? 0 : throttle * 18 * (1 - damage * 0.62) * damagedPowerPulse;
+  const brake = stationaryRev ? 0 : brakeKey * (data.speed > 0.2 ? 34 : 13) * (1 - damage * 0.38);
+  const drag = 4.2 + Math.abs(data.speed) * 0.1 + damage * 1.8;
   data.braking = Boolean(brakeKey || (!throttle && data.speed > 4));
   if (!stationaryRev) {
     data.speed += accel * dt;
@@ -1162,7 +1174,8 @@ function updatePlayer(dt) {
   }
   if (!throttle && !brakeKey) data.speed -= Math.sign(data.speed) * drag * dt;
   if (Math.abs(data.speed) < 0.1) data.speed = 0;
-  data.speed = THREE.MathUtils.clamp(data.speed, -7.5, data.maxSpeed);
+  const damagedMaxSpeed = damage ? THREE.MathUtils.lerp(15, 7, damage) : data.maxSpeed;
+  data.speed = THREE.MathUtils.clamp(data.speed, damage ? -4.2 : -7.5, damagedMaxSpeed);
 
   if (Math.abs(data.speed) > 0.4) {
     const speedFactor = THREE.MathUtils.clamp(Math.abs(data.speed) / data.maxSpeed, 0.18, 1);
@@ -1174,7 +1187,7 @@ function updatePlayer(dt) {
   const previous = car.position.clone();
   const desiredVelocity = forward.multiplyScalar(data.speed);
   if (data.velocity.lengthSq() < 0.01) data.velocity.copy(desiredVelocity);
-  const grip = THREE.MathUtils.lerp(10, 0.85, data.driftRatio);
+  const grip = THREE.MathUtils.lerp(10, 0.85, data.driftRatio) * (1 - damage * 0.5);
   data.velocity.lerp(desiredVelocity, Math.min(1, grip * dt));
   if (handbrake) {
     data.speed = moveToward(data.speed, 0, dt * (1.7 + Math.abs(data.steer) * 2.4));
@@ -1592,6 +1605,9 @@ function transferPlayerControl(target, message) {
   targetData.revSmokeTimer = 0;
   targetData.driftRatio = 0;
   targetData.driftSmokeTimer = 0;
+  targetData.driveDamage = 0;
+  targetData.damagePull = 0;
+  targetData.limpMode = false;
   targetData.lastSafe = target.position.clone();
   targetData.braking = false;
   targetData.hazard = false;
@@ -3187,6 +3203,8 @@ function applyCrashImpulse(a, b, dt, hit) {
       spin: player === a ? spin : -spin,
       startedAt: state.time,
     };
+    player.userData.driveDamage = THREE.MathUtils.clamp((player.userData.driveDamage || 0) + 0.25 + impactStrength * 0.5, 0.35, 1);
+    player.userData.damagePull = Math.sign(localImpulse.x || spin || 1);
     state.playerCrashed = true;
     ensureCrashMeeting(a, b);
     registerCrashResponder(a.userData.player ? b : a);
