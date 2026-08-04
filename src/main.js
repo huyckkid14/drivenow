@@ -5,6 +5,10 @@ scene.background = new THREE.Color(0x9bc8e8);
 scene.fog = new THREE.Fog(0x9bc8e8, 105, 255);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 600);
+const leftMirrorCamera = new THREE.PerspectiveCamera(52, 2.05, 0.1, 240);
+const rightMirrorCamera = new THREE.PerspectiveCamera(52, 2.05, 0.1, 240);
+const leftMirrorTarget = new THREE.WebGLRenderTarget(256, 128);
+const rightMirrorTarget = new THREE.WebGLRenderTarget(256, 128);
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
 const policeRaycaster = new THREE.Raycaster();
 const policePointer = new THREE.Vector2();
@@ -119,6 +123,8 @@ const state = {
   policeInterview: false,
   policeConversation: null,
   introActive: document.documentElement.dataset.intro === "new",
+  cameraView: 0,
+  cockpitLook: { yaw: 0, pitch: 0 },
   botSensitivity: 0,
   trafficDensity: 1,
   trafficInitialized: false,
@@ -602,12 +608,86 @@ function createPlayer() {
     driverDoor: player.userData.driverDoor,
     body: player.userData.body,
     cabin: player.userData.cabin,
+    playerMarker: player.userData.playerMarker,
     wheels: player.userData.wheels,
   };
   city.add(player);
   cars.push(player);
   collidableCars.push(player);
   state.player = player;
+  createCockpitInterior(player);
+}
+
+function createCockpitInterior(car) {
+  const cockpit = new THREE.Group();
+  cockpit.visible = false;
+  const trim = new THREE.MeshStandardMaterial({ color: 0x111619, roughness: 0.72, side: THREE.DoubleSide });
+  const softTrim = new THREE.MeshStandardMaterial({ color: 0x252d31, roughness: 0.9, side: THREE.DoubleSide });
+  const glass = new THREE.MeshStandardMaterial({ color: 0x9fc9db, transparent: true, opacity: 0.08, roughness: 0.08, side: THREE.DoubleSide });
+
+  const dashboard = new THREE.Mesh(new THREE.BoxGeometry(2.18, 0.28, 0.72), trim);
+  dashboard.position.set(0, 1.05, 0.73);
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(2.15, 0.13, 1.95), softTrim);
+  roof.position.set(0, 2.18, -0.05);
+  const windshield = new THREE.Mesh(new THREE.PlaneGeometry(1.84, 0.86), glass);
+  windshield.position.set(0, 1.67, 0.86);
+  windshield.rotation.x = -0.12;
+  for (const [x, tilt] of [[-0.96, -0.12], [0.96, 0.12]]) {
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.9, 0.15), softTrim);
+    pillar.position.set(x, 1.69, 0.78);
+    pillar.rotation.z = tilt;
+    cockpit.add(pillar);
+  }
+
+  const wheel = new THREE.Mesh(
+    new THREE.TorusGeometry(0.24, 0.035, 12, 32),
+    new THREE.MeshStandardMaterial({ color: 0x07090a, roughness: 0.65, side: THREE.DoubleSide }),
+  );
+  wheel.position.set(0.38, 1.18, 0.32);
+  wheel.rotation.x = -0.14;
+  const wheelHub = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.08, 20), trim);
+  wheelHub.position.set(0.38, 1.18, 0.3);
+  wheelHub.rotation.x = Math.PI / 2;
+
+  const displayCanvas = document.createElement("canvas");
+  displayCanvas.width = 512;
+  displayCanvas.height = 256;
+  const displayTexture = new THREE.CanvasTexture(displayCanvas);
+  displayTexture.colorSpace = THREE.SRGBColorSpace;
+  const display = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.64, 0.3),
+    new THREE.MeshBasicMaterial({ map: displayTexture, side: THREE.DoubleSide }),
+  );
+  display.position.set(-0.08, 1.23, 0.355);
+  display.rotation.y = Math.PI;
+
+  const infotainment = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.42, 0.25),
+    new THREE.MeshBasicMaterial({ color: 0x12344a, side: THREE.DoubleSide }),
+  );
+  infotainment.position.set(-0.72, 1.18, 0.36);
+  infotainment.rotation.y = Math.PI;
+
+  const mirrorMaterialLeft = new THREE.MeshBasicMaterial({ map: leftMirrorTarget.texture, side: THREE.DoubleSide });
+  const mirrorMaterialRight = new THREE.MeshBasicMaterial({ map: rightMirrorTarget.texture, side: THREE.DoubleSide });
+  for (const spec of [
+    { x: 1.34, material: mirrorMaterialLeft },
+    { x: -1.05, material: mirrorMaterialRight },
+  ]) {
+    const housing = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.34, 0.12), trim);
+    housing.position.set(spec.x, 1.36, 0.68);
+    const mirror = new THREE.Mesh(new THREE.PlaneGeometry(0.53, 0.26), spec.material);
+    mirror.position.set(spec.x, 1.36, 0.61);
+    mirror.rotation.y = Math.PI;
+    cockpit.add(housing, mirror);
+  }
+
+  cockpit.add(dashboard, roof, windshield, wheel, wheelHub, display, infotainment);
+  cockpit.userData.displayCanvas = displayCanvas;
+  cockpit.userData.displayTexture = displayTexture;
+  car.add(cockpit);
+  car.userData.cockpit = cockpit;
+  updateCockpitDisplay(0, 900);
 }
 
 function createPedestrian() {
@@ -870,6 +950,7 @@ function makeCar(color, isPlayer) {
     marker.position.set(0, 2.35, 0);
     marker.rotation.y = Math.PI;
     car.add(marker);
+    car.userData.playerMarker = marker;
 
   }
 
@@ -932,7 +1013,36 @@ function animate() {
   updateCamera(dt);
   updateHud();
   if (state.securityRoom) renderSecurityFeeds();
-  else renderer.render(scene, camera);
+  else renderDrivingScene();
+}
+
+function renderDrivingScene() {
+  renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+  renderer.setScissorTest(false);
+  const cockpitActive = state.cameraView === 2 && !state.onFoot && !state.playerCrashed && !state.policeInterview;
+  if (cockpitActive) renderCockpitMirrors();
+  renderer.setRenderTarget(null);
+  renderer.render(scene, camera);
+}
+
+function renderCockpitMirrors() {
+  const car = state.player;
+  const cockpit = car.userData.cockpit;
+  const shadowUpdates = renderer.shadowMap.autoUpdate;
+  renderer.shadowMap.autoUpdate = false;
+  cockpit.visible = false;
+  for (const spec of [
+    { view: leftMirrorCamera, target: leftMirrorTarget, x: 1.34, outward: 3.2 },
+    { view: rightMirrorCamera, target: rightMirrorTarget, x: -1.34, outward: -3.2 },
+  ]) {
+    spec.view.position.copy(car.localToWorld(new THREE.Vector3(spec.x, 1.42, 0.62)));
+    spec.view.lookAt(car.localToWorld(new THREE.Vector3(spec.outward, 1.2, -28)));
+    renderer.setRenderTarget(spec.target);
+    renderer.clear();
+    renderer.render(scene, spec.view);
+  }
+  cockpit.visible = true;
+  renderer.shadowMap.autoUpdate = shadowUpdates;
 }
 
 function renderSecurityFeeds() {
@@ -3765,6 +3875,26 @@ function updateCamera(dt) {
     camera.lookAt(person.position.clone().addScaledVector(walkForward, 8).add(new THREE.Vector3(0, 2.2, 0)));
     return;
   }
+  if (!state.playerCrashed && state.cameraView > 0) {
+    const hoodView = state.cameraView === 1;
+    const cameraLocal = hoodView
+      ? new THREE.Vector3(0, 1.72, 1.15)
+      : new THREE.Vector3(0.34, 1.7, -0.62);
+    const lookLocal = hoodView
+      ? new THREE.Vector3(0, 1.35, 32)
+      : new THREE.Vector3(
+          0.34 + Math.sin(state.cockpitLook.yaw) * 28,
+          1.48 - Math.sin(state.cockpitLook.pitch) * 28,
+          Math.cos(state.cockpitLook.yaw) * 28,
+        );
+    const target = car.localToWorld(cameraLocal);
+    const look = car.localToWorld(lookLocal);
+    // Close cameras must stay rigidly mounted. World-space smoothing makes them
+    // lag through the car body when the player accelerates.
+    camera.position.copy(target);
+    camera.lookAt(look);
+    return;
+  }
   const baseForward = getWorldForward(car);
   const forward = state.playerCrashed
     ? baseForward.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), state.crashLook.yaw).normalize()
@@ -3783,6 +3913,19 @@ function updateCamera(dt) {
 function updateHud() {
   document.body.classList.toggle("security-view", state.securityRoom);
   const speed = Math.round(Math.abs(state.player.userData.speed) * 2.237);
+  const dashboardVisible = state.cameraView === 2 && !state.onFoot && !state.securityRoom && !state.policeInterview;
+  state.player.userData.cockpit.visible = dashboardVisible;
+  state.player.userData.cabin.visible = !dashboardVisible;
+  state.player.userData.playerMarker.visible = !dashboardVisible;
+  if (dashboardVisible) {
+    const data = state.player.userData;
+    const speedRatio = THREE.MathUtils.clamp(Math.abs(data.speed || 0) / 36, 0, 1);
+    const rpmRatio = Math.max(speedRatio, data.revRatio || 0);
+    const rpm = Math.round((900 + rpmRatio * 6200) / 50) * 50;
+    const blinkOn = Math.sin((data.blink || 0) * Math.PI) > 0;
+    const hazardsOn = state.hazard || data.hazard;
+    updateCockpitDisplay(speed, rpm, blinkOn && (hazardsOn || state.signal === "left"), blinkOn && (hazardsOn || state.signal === "right"));
+  }
   speedEl.textContent = `${speed} mph`;
   if (state.hazard || state.player.userData.hazard) signalEl.textContent = "Hazards";
   else if (state.signal === "left") signalEl.textContent = "Left indicator";
@@ -3816,16 +3959,42 @@ function updateHud() {
   }
 }
 
+function updateCockpitDisplay(speed, rpm, leftActive = false, rightActive = false) {
+  const cockpit = state.player?.userData?.cockpit;
+  if (!cockpit) return;
+  const canvas = cockpit.userData.displayCanvas;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#05090b";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = leftActive ? "#ffb000" : "#36444a";
+  context.font = "bold 54px system-ui";
+  context.fillText("◀", 28, 86);
+  context.fillStyle = rightActive ? "#ffb000" : "#36444a";
+  context.fillText("▶", 420, 86);
+  context.fillStyle = "#f4fbff";
+  context.font = "bold 104px system-ui";
+  context.textAlign = "center";
+  context.fillText(String(speed), 256, 122);
+  context.fillStyle = "#8faab5";
+  context.font = "bold 27px system-ui";
+  context.fillText("MPH", 256, 158);
+  context.fillStyle = "#65d6ff";
+  context.font = "bold 30px system-ui";
+  context.fillText(`${rpm} RPM`, 256, 218);
+  context.textAlign = "start";
+  cockpit.userData.displayTexture.needsUpdate = true;
+}
+
 function onKeyDown(event) {
   const key = normalizeKey(event);
   if (!key) return;
   ensureAudio();
   keys.add(key);
-  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "space", "q", "e", "z", "c", "h", "p", "o", "1"].includes(key)) {
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "space", "q", "e", "z", "c", "d", "h", "p", "o", "1"].includes(key)) {
     event.preventDefault();
     event.stopPropagation();
   }
-  if (event.repeat && ["q", "e", "z", "c", "h", "p", "o", "1"].includes(key)) return;
+  if (event.repeat && ["q", "e", "z", "c", "d", "h", "p", "o", "1"].includes(key)) return;
   if (key === "escape" && state.securityRoom) {
     state.securitySelected = null;
     event.preventDefault();
@@ -3836,6 +4005,13 @@ function onKeyDown(event) {
   if (key === "e") toggleSignal("right");
   if (key === "z") toggleHazards();
   if (key === "c") toggleCarExit();
+  if (key === "d" && !state.introActive && !state.onFoot && !state.securityRoom && !state.policeInterview) {
+    state.cameraView = (state.cameraView + 1) % 3;
+    state.cockpitLook.yaw = 0;
+    state.cockpitLook.pitch = 0;
+    const viewName = ["Normal view", "Hood view", "Dashboard view"][state.cameraView];
+    statusEl.textContent = `${viewName} — D changes view`;
+  }
   if (key === "h" && !state.onFoot && !state.securityRoom) startPlayerHorn();
   if (key === "p") togglePoliceMode();
   if (key === "1") togglePoliceInterview();
@@ -3843,7 +4019,7 @@ function onKeyDown(event) {
     stopPoliceSiren();
     statusEl.textContent = "Police siren off";
   }
-  if (["q", "e", "z", "c", "h", "p", "o", "1"].includes(key)) state.toggleHeld.add(key);
+  if (["q", "e", "z", "c", "d", "h", "p", "o", "1"].includes(key)) state.toggleHeld.add(key);
 }
 
 function onKeyPress(event) {
@@ -3895,6 +4071,14 @@ function onPointerDown(event) {
 }
 
 function onPointerMove(event) {
+  if (state.cameraView === 2 && !state.onFoot && !state.playerCrashed && !state.securityRoom && !state.policeInterview) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    const x = THREE.MathUtils.clamp(((event.clientX - rect.left) / rect.width) * 2 - 1, -1, 1);
+    const y = THREE.MathUtils.clamp(((event.clientY - rect.top) / rect.height) * 2 - 1, -1, 1);
+    state.cockpitLook.yaw = -x * 1.42;
+    state.cockpitLook.pitch = y * 0.34;
+    return;
+  }
   if (!state.crashLook.active) return;
   const dx = event.clientX - state.crashLook.lastX;
   const dy = event.clientY - state.crashLook.lastY;
@@ -3919,6 +4103,7 @@ function normalizeKey(event) {
     KeyE: "e",
     KeyZ: "z",
     KeyC: "c",
+    KeyD: "d",
     KeyH: "h",
     KeyP: "p",
     KeyO: "o",
