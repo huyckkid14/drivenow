@@ -179,7 +179,6 @@ function init() {
   createIntersectionSecurityCameras();
   createPlayer();
   createPedestrian();
-  createNpcPedestrians();
   createBots();
   createSkylineDetails();
 
