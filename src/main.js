@@ -7,8 +7,10 @@ scene.fog = new THREE.Fog(0x9bc8e8, 105, 255);
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 600);
 const leftMirrorCamera = new THREE.PerspectiveCamera(52, 2.05, 0.1, 240);
 const rightMirrorCamera = new THREE.PerspectiveCamera(52, 2.05, 0.1, 240);
+const rearviewCamera = new THREE.PerspectiveCamera(48, 3.1, 0.1, 240);
 const leftMirrorTarget = new THREE.WebGLRenderTarget(256, 128);
 const rightMirrorTarget = new THREE.WebGLRenderTarget(256, 128);
+const rearviewTarget = new THREE.WebGLRenderTarget(320, 104);
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
 const policeRaycaster = new THREE.Raycaster();
 const policePointer = new THREE.Vector2();
@@ -683,7 +685,19 @@ function createCockpitInterior(car) {
     cockpit.add(housing, mirror);
   }
 
-  cockpit.add(dashboard, roof, windshield, wheel, wheelHub, display, infotainment);
+  const rearviewHousing = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.3, 0.12), trim);
+  rearviewHousing.position.set(0, 1.88, 0.46);
+  const rearviewMirror = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.76, 0.22),
+    new THREE.MeshBasicMaterial({ map: rearviewTarget.texture, side: THREE.DoubleSide }),
+  );
+  rearviewMirror.position.set(0, 1.88, 0.385);
+  rearviewMirror.rotation.y = Math.PI;
+  const rearviewStem = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.2, 0.08), trim);
+  rearviewStem.position.set(0, 2.02, 0.5);
+
+  cockpit.add(dashboard, roof, windshield, wheel, wheelHub, display, infotainment,
+    rearviewHousing, rearviewMirror, rearviewStem);
   cockpit.userData.displayCanvas = displayCanvas;
   cockpit.userData.displayTexture = displayTexture;
   car.add(cockpit);
@@ -1035,9 +1049,11 @@ function renderCockpitMirrors() {
   for (const spec of [
     { view: leftMirrorCamera, target: leftMirrorTarget, x: 1.34, outward: 3.2 },
     { view: rightMirrorCamera, target: rightMirrorTarget, x: -1.34, outward: -3.2 },
+    { view: rearviewCamera, target: rearviewTarget, x: 0, outward: 0 },
   ]) {
-    spec.view.position.copy(car.localToWorld(new THREE.Vector3(spec.x, 1.42, 0.62)));
-    spec.view.lookAt(car.localToWorld(new THREE.Vector3(spec.outward, 1.2, -28)));
+    const centerMirror = spec.view === rearviewCamera;
+    spec.view.position.copy(car.localToWorld(new THREE.Vector3(spec.x, centerMirror ? 1.72 : 1.42, 0.62)));
+    spec.view.lookAt(car.localToWorld(new THREE.Vector3(spec.outward, centerMirror ? 1.58 : 1.2, -28)));
     renderer.setRenderTarget(spec.target);
     renderer.clear();
     renderer.render(scene, spec.view);
