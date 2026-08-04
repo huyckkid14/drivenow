@@ -1020,7 +1020,7 @@ function animate() {
 function renderDrivingScene() {
   renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
   renderer.setScissorTest(false);
-  const cockpitActive = state.cameraView === 2 && !state.onFoot && !state.playerCrashed && !state.policeInterview;
+  const cockpitActive = state.cameraView === 2 && !state.onFoot && !state.policeInterview;
   if (cockpitActive) renderCockpitMirrors();
   renderer.setRenderTarget(null);
   renderer.render(scene, camera);
@@ -1244,6 +1244,9 @@ function beginCarStep(transition) {
   transition.edgePoint = carDoorwayPoint(2.86, -0.42);
   transition.groundPoint = carDoorwayPoint(2.45, -1.1);
   if (transition.type === "exit") {
+    state.cameraView = 0;
+    state.cockpitLook.yaw = 0;
+    state.cockpitLook.pitch = 0;
     state.onFoot = true;
     person.position.copy(transition.seatPoint);
     person.rotation.y = car.rotation.y;
@@ -3145,6 +3148,16 @@ function applyCrashImpulse(a, b, dt, hit) {
   playCrashSound(Math.min(1, velocityA.clone().sub(velocityB).length() / 30));
   state.crashed = true;
   if (a.userData.player || b.userData.player) {
+    const player = a.userData.player ? a : b;
+    const playerImpulse = (player === a ? impulse.clone().add(scrape) : impulse.clone().add(scrape).multiplyScalar(-1));
+    const localImpulse = playerImpulse.applyQuaternion(player.quaternion.clone().invert());
+    const impactStrength = THREE.MathUtils.clamp((closingSpeed + relativeVelocity.length() * 0.35) / 24, 0.12, 1);
+    player.userData.cockpitImpact = {
+      direction: localImpulse.lengthSq() > 0.001 ? localImpulse.normalize() : new THREE.Vector3(0, 0, -1),
+      strength: impactStrength,
+      spin: player === a ? spin : -spin,
+      startedAt: state.time,
+    };
     state.playerCrashed = true;
     ensureCrashMeeting(a, b);
     registerCrashResponder(a.userData.player ? b : a);
@@ -3876,11 +3889,13 @@ function updateCamera(dt) {
     camera.lookAt(person.position.clone().addScaledVector(walkForward, 8).add(new THREE.Vector3(0, 2.2, 0)));
     return;
   }
-  if (!state.playerCrashed && state.cameraView > 0) {
+  if (state.cameraView > 0) {
     const hoodView = state.cameraView === 1;
     const cameraLocal = hoodView
       ? new THREE.Vector3(0, 1.72, 1.15)
       : new THREE.Vector3(0.34, 1.7, -0.62);
+    const cockpitImpact = !hoodView ? getCockpitImpactMotion(car) : null;
+    if (cockpitImpact) cameraLocal.add(cockpitImpact.position);
     const lookLocal = hoodView
       ? new THREE.Vector3(0, 1.35, 32)
       : new THREE.Vector3(
@@ -3888,6 +3903,7 @@ function updateCamera(dt) {
           1.48 - Math.sin(state.cockpitLook.pitch) * 28,
           Math.cos(state.cockpitLook.yaw) * 28,
         );
+    if (cockpitImpact) lookLocal.add(cockpitImpact.look);
     const target = car.localToWorld(cameraLocal);
     const look = car.localToWorld(lookLocal);
     // Close cameras must stay rigidly mounted. World-space smoothing makes them
@@ -3909,6 +3925,34 @@ function updateCamera(dt) {
   camera.position.lerp(target, 1 - Math.pow(0.001, dt));
   const look = carPosition.clone().addScaledVector(forward, 8).add(new THREE.Vector3(0, 2.2, 0));
   camera.lookAt(look);
+}
+
+function getCockpitImpactMotion(car) {
+  const impact = car.userData.cockpitImpact;
+  if (!impact) return null;
+  const age = Math.max(0, state.time - impact.startedAt);
+  if (age > 1.65) {
+    car.userData.cockpitImpact = null;
+    return null;
+  }
+  const direction = impact.direction;
+  const initialKick = Math.exp(-age * 16);
+  const suspensionDecay = Math.exp(-age * 4.4);
+  const suspensionBounce = Math.sin(age * 23) * suspensionDecay;
+  const spinWobble = Math.sin(age * 16 + 0.55) * suspensionDecay * THREE.MathUtils.clamp(impact.spin / 2.8, -1, 1);
+  const strength = impact.strength;
+  return {
+    position: new THREE.Vector3(
+      direction.x * strength * (initialKick * 0.2 + suspensionBounce * 0.085) + spinWobble * 0.045,
+      strength * Math.sin(age * 28) * suspensionDecay * 0.055,
+      direction.z * strength * (initialKick * 0.14 + suspensionBounce * 0.06),
+    ),
+    look: new THREE.Vector3(
+      direction.x * strength * (initialKick * 2.8 + suspensionBounce * 1.35) + spinWobble * 2.4,
+      -direction.z * strength * (initialKick * 0.8 + suspensionBounce * 0.5),
+      0,
+    ),
+  };
 }
 
 function updateHud() {
@@ -4084,7 +4128,7 @@ function onPointerDown(event) {
 }
 
 function onPointerMove(event) {
-  if (state.cameraView === 2 && !state.onFoot && !state.playerCrashed && !state.securityRoom && !state.policeInterview) {
+  if (state.cameraView === 2 && !state.onFoot && !state.securityRoom && !state.policeInterview) {
     const rect = renderer.domElement.getBoundingClientRect();
     const x = THREE.MathUtils.clamp(((event.clientX - rect.left) / rect.width) * 2 - 1, -1, 1);
     const y = THREE.MathUtils.clamp(((event.clientY - rect.top) / rect.height) * 2 - 1, -1, 1);
@@ -4435,6 +4479,9 @@ function restartCity() {
   state.securityRoom = false;
   state.securitySelected = null;
   state.securityFeedCursor = 0;
+  state.cameraView = 0;
+  state.cockpitLook.yaw = 0;
+  state.cockpitLook.pitch = 0;
   state.greenBlockTimer = 0;
   state.doorMotionStart = -10;
   state.carTransition = null;
