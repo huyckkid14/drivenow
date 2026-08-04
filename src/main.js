@@ -1539,11 +1539,23 @@ function transferPlayerControl(target, message) {
   const oldData = oldPlayer.userData;
   const targetData = target.userData;
 
-  const playerMarker = oldPlayer.children.find((child) => child.geometry?.type === "ConeGeometry" && child.position.y > 2);
+  const playerMarker = oldData.playerMarker
+    || oldPlayer.children.find((child) => child.geometry?.type === "ConeGeometry" && child.position.y > 2);
   if (playerMarker) {
     oldPlayer.remove(playerMarker);
     target.add(playerMarker);
+    oldData.playerMarker = null;
+    targetData.playerMarker = playerMarker;
   }
+  const cockpit = oldData.cockpit;
+  if (cockpit) {
+    oldPlayer.remove(cockpit);
+    target.add(cockpit);
+    cockpit.visible = false;
+    oldData.cockpit = null;
+    targetData.cockpit = cockpit;
+  }
+  if (oldData.cabin) oldData.cabin.visible = true;
 
   oldData.player = false;
   oldData.abandonedPlayerCar = true;
@@ -3959,10 +3971,11 @@ function updateHud() {
   document.body.classList.toggle("security-view", state.securityRoom);
   const speed = Math.round(Math.abs(state.player.userData.speed) * 2.237);
   const dashboardVisible = state.cameraView === 2 && !state.onFoot && !state.securityRoom && !state.policeInterview;
-  state.player.userData.cockpit.visible = dashboardVisible;
-  state.player.userData.cabin.visible = !dashboardVisible;
-  state.player.userData.playerMarker.visible = !dashboardVisible;
-  if (state.player.userData.policeKit) state.player.userData.policeKit.visible = !dashboardVisible;
+  const playerData = state.player.userData;
+  if (playerData.cockpit) playerData.cockpit.visible = dashboardVisible;
+  if (playerData.cabin) playerData.cabin.visible = !dashboardVisible;
+  if (playerData.playerMarker) playerData.playerMarker.visible = !dashboardVisible;
+  if (playerData.policeKit) playerData.policeKit.visible = !dashboardVisible;
   if (dashboardVisible) {
     const data = state.player.userData;
     const speedRatio = THREE.MathUtils.clamp(Math.abs(data.speed || 0) / 36, 0, 1);
