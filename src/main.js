@@ -687,16 +687,16 @@ function createCockpitInterior(car) {
     cockpit.add(housing, mirror);
   }
 
-  const rearviewHousing = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.3, 0.12), trim);
-  rearviewHousing.position.set(0, 1.88, 0.46);
+  const rearviewHousing = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.16, 0.1), trim);
+  rearviewHousing.position.set(0, 2.01, 0.46);
   const rearviewMirror = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.76, 0.22),
+    new THREE.PlaneGeometry(0.4, 0.105),
     new THREE.MeshBasicMaterial({ map: rearviewTarget.texture, side: THREE.DoubleSide }),
   );
-  rearviewMirror.position.set(0, 1.88, 0.385);
+  rearviewMirror.position.set(0, 2.01, 0.4);
   rearviewMirror.rotation.y = Math.PI;
-  const rearviewStem = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.2, 0.08), trim);
-  rearviewStem.position.set(0, 2.02, 0.5);
+  const rearviewStem = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.12, 0.06), trim);
+  rearviewStem.position.set(0, 2.11, 0.5);
 
   cockpit.add(dashboard, roof, windshield, wheel, wheelHub, display, infotainment,
     rearviewHousing, rearviewMirror, rearviewStem);
