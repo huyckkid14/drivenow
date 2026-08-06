@@ -8,9 +8,11 @@ const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerH
 const leftMirrorCamera = new THREE.PerspectiveCamera(52, 2.05, 0.1, 240);
 const rightMirrorCamera = new THREE.PerspectiveCamera(52, 2.05, 0.1, 240);
 const rearviewCamera = new THREE.PerspectiveCamera(48, 3.1, 0.1, 240);
+const backupCamera = new THREE.PerspectiveCamera(62, 2, 0.1, 120);
 const leftMirrorTarget = new THREE.WebGLRenderTarget(256, 128);
 const rightMirrorTarget = new THREE.WebGLRenderTarget(256, 128);
 const rearviewTarget = new THREE.WebGLRenderTarget(320, 104);
+const backupCameraTarget = new THREE.WebGLRenderTarget(512, 256);
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
 const policeRaycaster = new THREE.Raycaster();
 const policePointer = new THREE.Vector2();
@@ -659,12 +661,35 @@ function createCockpitInterior(car) {
   displayCanvas.height = 256;
   const displayTexture = new THREE.CanvasTexture(displayCanvas);
   displayTexture.colorSpace = THREE.SRGBColorSpace;
+  backupCameraTarget.texture.colorSpace = THREE.SRGBColorSpace;
+  const displayMaterial = new THREE.MeshBasicMaterial({ map: displayTexture, side: THREE.DoubleSide });
   const display = new THREE.Mesh(
     new THREE.PlaneGeometry(0.64, 0.3),
-    new THREE.MeshBasicMaterial({ map: displayTexture, side: THREE.DoubleSide }),
+    displayMaterial,
   );
   display.position.set(-0.08, 1.23, 0.355);
   display.rotation.y = Math.PI;
+
+  const backupGuides = new THREE.Group();
+  backupGuides.visible = false;
+  for (const [color, z, width] of [[0x43e47a, -10.2, 2.35], [0xffd247, -7.2, 2.7], [0xff4b42, -4.25, 3.05]]) {
+    const marker = new THREE.Mesh(
+      new THREE.BoxGeometry(width, 0.045, 0.2),
+      new THREE.MeshBasicMaterial({ color, depthTest: true }),
+    );
+    marker.position.set(0, 0.31, z);
+    backupGuides.add(marker);
+  }
+  for (const side of [-1, 1]) {
+    const rail = new THREE.Mesh(
+      new THREE.BoxGeometry(0.1, 0.04, 6.25),
+      new THREE.MeshBasicMaterial({ color: 0xf4fbff, depthTest: true }),
+    );
+    rail.position.set(side * 1.32, 0.305, -7.2);
+    rail.rotation.y = side * 0.058;
+    backupGuides.add(rail);
+  }
+  car.add(backupGuides);
 
   const infotainment = new THREE.Mesh(
     new THREE.PlaneGeometry(0.42, 0.25),
@@ -702,6 +727,8 @@ function createCockpitInterior(car) {
     rearviewHousing, rearviewMirror, rearviewStem);
   cockpit.userData.displayCanvas = displayCanvas;
   cockpit.userData.displayTexture = displayTexture;
+  cockpit.userData.displayMaterial = displayMaterial;
+  cockpit.userData.backupGuides = backupGuides;
   car.add(cockpit);
   car.userData.cockpit = cockpit;
   updateCockpitDisplay(0, 900);
@@ -1060,6 +1087,15 @@ function renderCockpitMirrors() {
     renderer.clear();
     renderer.render(scene, spec.view);
   }
+  if ((car.userData.speed || 0) < -0.25) {
+    cockpit.userData.backupGuides.visible = true;
+    backupCamera.position.copy(car.localToWorld(new THREE.Vector3(0, 1.05, -2.08)));
+    backupCamera.lookAt(car.localToWorld(new THREE.Vector3(0, 0.12, -18)));
+    renderer.setRenderTarget(backupCameraTarget);
+    renderer.clear();
+    renderer.render(scene, backupCamera);
+    cockpit.userData.backupGuides.visible = false;
+  }
   cockpit.visible = true;
   renderer.shadowMap.autoUpdate = shadowUpdates;
 }
@@ -1165,7 +1201,7 @@ function updatePlayer(dt) {
 
   const damagedPowerPulse = damage ? 0.48 + (Math.sin(state.time * 7.2) * 0.5 + 0.5) * 0.3 : 1;
   const accel = stationaryRev ? 0 : throttle * 18 * (1 - damage * 0.62) * damagedPowerPulse;
-  const brake = stationaryRev ? 0 : brakeKey * (data.speed > 0.2 ? 34 : 13) * (1 - damage * 0.38);
+  const brake = stationaryRev ? 0 : brakeKey * (data.speed > 0.2 ? 34 : 18) * (1 - damage * 0.38);
   const drag = 4.2 + Math.abs(data.speed) * 0.1 + damage * 1.8;
   data.braking = Boolean(brakeKey || (!throttle && data.speed > 4));
   if (!stationaryRev) {
@@ -1175,7 +1211,7 @@ function updatePlayer(dt) {
   if (!throttle && !brakeKey) data.speed -= Math.sign(data.speed) * drag * dt;
   if (Math.abs(data.speed) < 0.1) data.speed = 0;
   const damagedMaxSpeed = damage ? THREE.MathUtils.lerp(15, 7, damage) : data.maxSpeed;
-  data.speed = THREE.MathUtils.clamp(data.speed, damage ? -4.2 : -7.5, damagedMaxSpeed);
+  data.speed = THREE.MathUtils.clamp(data.speed, damage ? -5.5 : -11, damagedMaxSpeed);
 
   if (Math.abs(data.speed) > 0.4) {
     const speedFactor = THREE.MathUtils.clamp(Math.abs(data.speed) / data.maxSpeed, 0.18, 1);
@@ -1579,6 +1615,12 @@ function transferPlayerControl(target, message) {
   }
   const cockpit = oldData.cockpit;
   if (cockpit) {
+    const backupGuides = cockpit.userData.backupGuides;
+    if (backupGuides) {
+      oldPlayer.remove(backupGuides);
+      target.add(backupGuides);
+      backupGuides.visible = false;
+    }
     oldPlayer.remove(cockpit);
     target.add(cockpit);
     cockpit.visible = false;
@@ -4017,6 +4059,10 @@ function updateHud() {
   if (playerData.policeKit) playerData.policeKit.visible = !dashboardVisible;
   if (dashboardVisible) {
     const data = state.player.userData;
+    const backupActive = (data.speed || 0) < -0.25;
+    const cockpit = data.cockpit;
+    cockpit.userData.displayMaterial.map = backupActive ? backupCameraTarget.texture : cockpit.userData.displayTexture;
+    cockpit.userData.displayMaterial.needsUpdate = true;
     const speedRatio = THREE.MathUtils.clamp(Math.abs(data.speed || 0) / 36, 0, 1);
     const rpmRatio = Math.max(speedRatio, data.revRatio || 0);
     const rpm = Math.round((900 + rpmRatio * 6200) / 50) * 50;
