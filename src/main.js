@@ -1962,6 +1962,9 @@ function explodePoliceShotCar(car) {
   data.policeRelease = null;
   data.explosionTumble = {
     startedAt: state.time,
+    startX: car.rotation.x,
+    startZ: car.rotation.z,
+    startY: car.position.y,
     exposure: 1,
     axisX: THREE.MathUtils.randFloat(0.82, 1),
     axisZ: THREE.MathUtils.randFloatSpread(0.7),
@@ -2006,6 +2009,9 @@ function damageCarsNearExplosion(origin, sourceCar) {
     data.policeShotHits = (data.policeShotHits || 0) + Math.max(1, Math.round(exposure * 3));
     data.explosionTumble = {
       startedAt: state.time,
+      startX: nearby.rotation.x,
+      startZ: nearby.rotation.z,
+      startY: nearby.position.y,
       exposure,
       axisX: THREE.MathUtils.randFloat(0.72, 1),
       axisZ: THREE.MathUtils.randFloatSpread(0.8),
@@ -2038,29 +2044,34 @@ function updateExplosionTumbles() {
     const age = state.time - tumble.startedAt;
     const flipDuration = 0.72;
     const totalDuration = 3.15;
+    const startX = tumble.startX || 0;
+    const startZ = tumble.startZ || 0;
+    const startY = tumble.startY || 0;
+    const finalRoll = startZ + tumble.direction * (tumble.exposure > 0.52 ? Math.PI * 1.5 : Math.PI * (0.55 + tumble.exposure * 0.35));
+    const finalPitch = startX + tumble.axisZ * 0.22;
+    const wreckHeight = Math.max(startY, 0.62 + tumble.exposure * 0.22);
     if (age >= totalDuration) {
-      car.rotation.x = 0;
-      car.rotation.z = 0;
-      car.position.y = 0;
+      car.rotation.x = finalPitch;
+      car.rotation.z = finalRoll;
+      car.position.y = wreckHeight;
       car.userData.explosionTumble = null;
       continue;
     }
     if (age < flipDuration) {
       const progress = age / flipDuration;
       const eased = progress * progress * (3 - 2 * progress);
-      const turns = tumble.exposure > 0.52 ? Math.PI * 2 : Math.PI * (0.7 + tumble.exposure * 0.55);
-      const angle = eased * turns * tumble.direction;
-      car.rotation.x = angle * tumble.axisX;
-      car.rotation.z = angle * tumble.axisZ;
-      car.position.y = Math.sin(progress * Math.PI) * (0.65 + tumble.exposure * 2.15);
+      car.rotation.x = THREE.MathUtils.lerp(startX, finalPitch, eased);
+      car.rotation.z = THREE.MathUtils.lerp(startZ, finalRoll, eased);
+      car.position.y = THREE.MathUtils.lerp(startY, wreckHeight, eased)
+        + Math.sin(progress * Math.PI) * (0.65 + tumble.exposure * 2.15);
       continue;
     }
     const settleProgress = (age - flipDuration) / (totalDuration - flipDuration);
     const decay = Math.pow(1 - settleProgress, 2.2);
     const wobble = Math.sin((age - flipDuration) * 12.5) * decay * (0.22 + tumble.exposure * 0.5);
-    car.rotation.x = wobble * tumble.axisX;
-    car.rotation.z = wobble * tumble.axisZ;
-    car.position.y = Math.abs(wobble) * 0.32;
+    car.rotation.x = finalPitch + wobble * tumble.axisX * 0.28;
+    car.rotation.z = finalRoll + wobble * 0.36;
+    car.position.y = wreckHeight + Math.abs(wobble) * 0.16;
   }
 }
 
