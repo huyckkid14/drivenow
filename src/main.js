@@ -1911,15 +1911,18 @@ function damageCarsNearExplosion(origin, sourceCar) {
   const blastRadius = 12;
   for (const nearby of collidableCars) {
     if (nearby === sourceCar || !nearby.visible || nearby.userData.waitingForEntry) continue;
-    const offset = nearby.position.clone().sub(origin);
-    offset.y = 0;
-    const distance = offset.length();
-    if (distance >= blastRadius) continue;
-    const exposure = 1 - distance / blastRadius;
-    const outward = distance > 0.05 ? offset.normalize() : new THREE.Vector3(1, 0, 0);
-    const impulseSpeed = 4 + exposure * 18;
+    const blastOffset = nearby.position.clone().add(new THREE.Vector3(0, 0.8, 0)).sub(origin);
+    if (Math.abs(blastOffset.y) > 5.5) continue;
+    const horizontalDistance = Math.hypot(blastOffset.x, blastOffset.z);
+    if (horizontalDistance >= blastRadius) continue;
+    const exposure = 1 - horizontalDistance / blastRadius;
+    if (exposure < 0.08) continue;
+    const outward = new THREE.Vector3(blastOffset.x, 0, blastOffset.z);
+    if (outward.lengthSq() > 0.0025) outward.normalize();
+    else outward.set(1, 0, 0);
+    const impulseSpeed = exposure * 22;
     const blastVelocity = outward.clone().multiplyScalar(impulseSpeed);
-    const damageStrength = 7 + exposure * 22;
+    const damageStrength = exposure * 29;
     spawnCollisionDamage(nearby, outward.clone().multiplyScalar(-1), blastVelocity, damageStrength);
 
     const data = nearby.userData;
@@ -1997,12 +2000,15 @@ function damagePedestriansNearExplosion(origin) {
   for (const driver of hijackedDrivers) if (driver.visible) people.push(driver);
 
   for (const person of new Set(people)) {
-    const offset = person.position.clone().sub(origin);
-    offset.y = 0;
-    const distance = offset.length();
-    if (distance >= 15) continue;
-    const exposure = 1 - distance / 15;
-    const direction = distance > 0.05 ? offset.normalize() : new THREE.Vector3(1, 0, 0);
+    const blastOffset = person.position.clone().add(new THREE.Vector3(0, 0.9, 0)).sub(origin);
+    if (Math.abs(blastOffset.y) > 6.5) continue;
+    const horizontalDistance = Math.hypot(blastOffset.x, blastOffset.z);
+    if (horizontalDistance >= 15) continue;
+    const exposure = 1 - horizontalDistance / 15;
+    if (exposure < 0.08) continue;
+    const direction = new THREE.Vector3(blastOffset.x, 0, blastOffset.z);
+    if (direction.lengthSq() > 0.0025) direction.normalize();
+    else direction.set(1, 0, 0);
     person.userData.speed = 0;
     person.userData.velocity = direction.multiplyScalar(3.5 + exposure * 8.5);
     person.userData.blastFlight = {
@@ -2064,14 +2070,24 @@ function createVehicleExplosion(origin) {
     city.add(mesh);
     weaponEffects.push({ mesh, bornAt: state.time, duration, kind, velocity });
   };
-  addEffect(new THREE.Mesh(
+  const fireball = new THREE.Mesh(
     new THREE.SphereGeometry(1, 20, 14),
     new THREE.MeshBasicMaterial({ color: 0xffc33b, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }),
-  ), 0.48, "fireball");
-  addEffect(new THREE.Mesh(
+  );
+  fireball.renderOrder = 3;
+  addEffect(fireball, 0.9, "fireball");
+  const fireCore = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 18, 12),
+    new THREE.MeshBasicMaterial({ color: 0xfff1a8, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }),
+  );
+  fireCore.renderOrder = 4;
+  addEffect(fireCore, 0.62, "fireCore");
+  const smoke = new THREE.Mesh(
     new THREE.SphereGeometry(1, 16, 12),
-    new THREE.MeshBasicMaterial({ color: 0x25282a, transparent: true, opacity: 0.72, depthWrite: false }),
-  ), 1.35, "smoke");
+    new THREE.MeshBasicMaterial({ color: 0x25282a, transparent: true, opacity: 0, depthWrite: false }),
+  );
+  smoke.renderOrder = 2;
+  addEffect(smoke, 1.55, "smoke");
   const shockwave = new THREE.Mesh(
     new THREE.TorusGeometry(1, 0.09, 8, 32),
     new THREE.MeshBasicMaterial({ color: 0xffd46a, transparent: true, opacity: 0.8, depthWrite: false }),
@@ -2117,8 +2133,10 @@ function updateWeaponEffects(dt) {
       continue;
     }
     effect.mesh.material.opacity = Math.max(0, 1 - progress);
-    if (effect.kind === "fireball") effect.mesh.scale.setScalar(0.45 + Math.sin(progress * Math.PI) * 3.2);
+    if (effect.kind === "fireball") effect.mesh.scale.setScalar(0.65 + Math.sin(progress * Math.PI) * 4.5);
+    if (effect.kind === "fireCore") effect.mesh.scale.setScalar(0.35 + Math.sin(progress * Math.PI) * 2.7);
     if (effect.kind === "smoke") {
+      effect.mesh.material.opacity = Math.sin(Math.min(1, progress * 2.4) * Math.PI / 2) * (1 - progress) * 0.68;
       effect.mesh.scale.setScalar(0.7 + progress * 4.6);
       effect.mesh.position.y += dt * 1.05;
     }
