@@ -31,6 +31,7 @@ const signalEl = document.querySelector("#signal");
 const statusEl = document.querySelector("#status");
 const restartBtn = document.querySelector("#restart");
 const loadingEl = document.querySelector("#loading");
+const aimVignetteEl = document.querySelector("#aimVignette");
 const pistolCrosshairEl = document.querySelector("#pistolCrosshair");
 const leftSignalBtn = document.querySelector("#leftSignal");
 const rightSignalBtn = document.querySelector("#rightSignal");
@@ -132,6 +133,7 @@ const state = {
   policePistolDrawn: false,
   policePistol: null,
   policeAim: { yaw: 0, pitch: 0 },
+  policeAimZoom: 0,
   lastPoliceShot: -10,
   introActive: document.documentElement.dataset.intro === "new",
   cameraView: 0,
@@ -1725,7 +1727,7 @@ function togglePolicePistol() {
   if (state.policePistolDrawn) {
     state.policeAim.yaw = state.pedestrian.rotation.y;
     state.policeAim.pitch = 0;
-    statusEl.textContent = "Pistol drawn — move mouse to aim, click to fire, P to holster";
+    statusEl.textContent = "Pistol drawn — hold Shift to aim, click to fire, P to holster";
     renderer.domElement.requestPointerLock?.().catch?.(() => {});
   } else {
     document.exitPointerLock?.();
@@ -1735,6 +1737,7 @@ function togglePolicePistol() {
 
 function holsterPolicePistol() {
   state.policePistolDrawn = false;
+  state.policeAimZoom = 0;
   if (state.policePistol) state.policePistol.visible = false;
   if (document.pointerLockElement === renderer.domElement) document.exitPointerLock?.();
 }
@@ -1917,8 +1920,14 @@ function updateWeaponEffects(dt) {
   if (state.policePistol?.userData.muzzle) {
     state.policePistol.userData.muzzle.visible = state.policePistolDrawn && state.time - state.lastPoliceShot < 0.045;
     const recoil = Math.max(0, 1 - (state.time - state.lastPoliceShot) / 0.16);
-    state.policePistol.position.z = -0.78 + recoil * 0.1;
+    const aiming = state.policePistolDrawn && keys.has("shift");
+    state.policeAimZoom = moveToward(state.policeAimZoom, aiming ? 1 : 0, dt * 5.5);
+    state.policePistol.position.x = THREE.MathUtils.lerp(0.36, 0, state.policeAimZoom);
+    state.policePistol.position.y = THREE.MathUtils.lerp(-0.34, -0.2, state.policeAimZoom);
+    state.policePistol.position.z = THREE.MathUtils.lerp(-0.78, -0.6, state.policeAimZoom) + recoil * 0.1;
     state.policePistol.rotation.x = -0.04 - recoil * 0.1;
+    state.policePistol.rotation.y = THREE.MathUtils.lerp(-0.08, 0, state.policeAimZoom);
+    state.policePistol.rotation.z = THREE.MathUtils.lerp(0.02, 0, state.policeAimZoom);
   }
   for (let i = weaponEffects.length - 1; i >= 0; i--) {
     const effect = weaponEffects[i];
@@ -4406,6 +4415,12 @@ function setBrakeLights(lamps, active) {
 
 function updateCamera(dt) {
   const car = state.player;
+  const targetFov = state.policePistolDrawn && keys.has("shift") ? 32 : 60;
+  const nextFov = moveToward(camera.fov, targetFov, dt * 82);
+  if (Math.abs(nextFov - camera.fov) > 0.001) {
+    camera.fov = nextFov;
+    camera.updateProjectionMatrix();
+  }
   if (state.policeInterview && state.policeTarget) {
     const target = state.policeTarget;
     const closePosition = target.localToWorld(new THREE.Vector3(4.2, 2.15, -0.15));
@@ -4506,6 +4521,9 @@ function getCockpitImpactMotion(car) {
 function updateHud() {
   document.body.classList.toggle("security-view", state.securityRoom);
   pistolCrosshairEl.hidden = !state.policePistolDrawn;
+  const aimingDownSights = state.policePistolDrawn && state.policeAimZoom > 0.35;
+  aimVignetteEl.hidden = !aimingDownSights;
+  pistolCrosshairEl.classList.toggle("aiming", aimingDownSights);
   const speed = Math.round(Math.abs(state.player.userData.speed) * 2.237);
   const dashboardVisible = state.cameraView === 2 && !state.onFoot && !state.securityRoom && !state.policeInterview;
   const playerData = state.player.userData;
@@ -4541,7 +4559,7 @@ function updateHud() {
       : `CAMERA ${state.securitySelected + 1} HIGHLIGHTED — Esc to view all — C to exit`;
   } else if (state.onFoot) {
     if (state.policePistolDrawn) {
-      statusEl.textContent = "Pistol drawn — mouse to aim · click to fire · P to holster";
+      statusEl.textContent = "Pistol drawn — Shift to aim · mouse to look · click to fire · P to holster";
     } else {
       const distance = state.pedestrian.position.distanceTo(state.player.position);
       statusEl.textContent = state.player.userData.crashed || state.player.userData.immobilized
