@@ -2169,13 +2169,20 @@ function updateBots(dt) {
     const approachSpeed = intersectionApproachSpeed(bot);
     const cruisingSpeed = Math.min(data.desiredSpeed, followingSpeed, approachSpeed);
     const redApproachSpeed = signalStop ? stopLineApproachSpeed(signalStop) : cruisingSpeed;
-    const targetSpeed = avoidance
+    let targetSpeed = avoidance
       ? avoidance.speed
       : intersectionBackOut
         ? 0
         : signalStop
         ? Math.min(followingSpeed, redApproachSpeed)
         : boxStop ? 0 : cruisingSpeed;
+    const safelyTailgated = !avoidance &&
+      !intersectionBlocked &&
+      (!frontTraffic || frontTraffic.gap > 7) &&
+      isPlayerFollowingBotClosely(bot);
+    if (safelyTailgated) {
+      targetSpeed = Math.max(targetSpeed, data.speed || 0, Math.min(data.desiredSpeed, 9));
+    }
     const tightGap = frontTraffic && frontTraffic.gap <= BOT_BUMPER_GAP + 1.1;
     const rate = targetSpeed < data.speed ? (intersectionBlocked || tightGap ? 34 : 26) : 7;
     data.braking = targetSpeed < data.speed - 0.5;
@@ -2501,6 +2508,12 @@ function getPlayerAvoidance(bot, sensitivity, dt) {
   const forward = dirs[data.dir];
   const right = new THREE.Vector3(forward.z, 0, -forward.x);
   const delta = player.position.clone().sub(bot.position);
+  const ahead = delta.dot(forward);
+  if (ahead < -0.35) {
+    data.avoidanceTimer = 0;
+    data.avoidanceSide = 0;
+    return null;
+  }
   const relativeVelocity = carVelocity(player).sub(forward.clone().multiplyScalar(data.speed || 0));
   const horizon = 0.35 + sensitivity * 2.15;
   const speedSq = relativeVelocity.lengthSq();
@@ -2519,7 +2532,6 @@ function getPlayerAvoidance(bot, sensitivity, dt) {
     return null;
   }
 
-  const ahead = delta.dot(forward);
   if (data.avoidanceSide === 0) data.avoidanceSide = side >= 0 ? -1 : 1;
   data.avoidanceTimer = 0.45 + sensitivity * 1.15;
 
@@ -2545,6 +2557,18 @@ function getPlayerAvoidance(bot, sensitivity, dt) {
   }
 
   return { direction: forward, speed: 0 };
+}
+
+function isPlayerFollowingBotClosely(bot) {
+  const player = state.player;
+  if (!player || state.onFoot || player.userData.crashed || player.userData.immobilized) return false;
+  const forward = dirs[bot.userData.dir];
+  const right = new THREE.Vector3(forward.z, 0, -forward.x);
+  const delta = player.position.clone().sub(bot.position);
+  const behind = -delta.dot(forward);
+  if (behind <= CAR_HALF_LENGTH || behind > 10) return false;
+  if (Math.abs(delta.dot(right)) > CAR_HALF_WIDTH * 2 + 0.35) return false;
+  return getForward(player).dot(forward) > 0.65;
 }
 
 function isEvasionPathClear(bot, direction, distance) {
