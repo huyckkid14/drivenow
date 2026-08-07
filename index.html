@@ -13,7 +13,7 @@
         document.documentElement.dataset.intro = "new";
       }
     </script>
-    <link rel="stylesheet" href="./styles.css?v=4" />
+    <link rel="stylesheet" href="./styles.css?v=5" />
   </head>
   <body>
     <main id="introOverlay" aria-label="Welcome to DriveNow">
@@ -70,6 +70,7 @@
     </div>
     <button id="restart" type="button" hidden>Restart city</button>
     <div id="loading">Loading city...</div>
+    <div id="pistolCrosshair" aria-hidden="true" hidden><span></span></div>
     <section id="policeInteraction" hidden aria-label="Traffic stop interaction">
       <div class="interaction-title">DRIVER WINDOW</div>
       <div id="driverResponse" class="driver-response">Driver: Good afternoon, officer.</div>
@@ -86,6 +87,6 @@
         }
       }
     </script>
-    <script type="module" src="./src/main.js?v=172"></script>
+    <script type="module" src="./src/main.js?v=174"></script>
   </body>
 </html>

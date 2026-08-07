@@ -31,6 +31,7 @@ const signalEl = document.querySelector("#signal");
 const statusEl = document.querySelector("#status");
 const restartBtn = document.querySelector("#restart");
 const loadingEl = document.querySelector("#loading");
+const pistolCrosshairEl = document.querySelector("#pistolCrosshair");
 const leftSignalBtn = document.querySelector("#leftSignal");
 const rightSignalBtn = document.querySelector("#rightSignal");
 const hazardsBtn = document.querySelector("#hazards");
@@ -1789,20 +1790,89 @@ function explodePoliceShotCar(car) {
   if (state.policeTarget === car) state.policeTarget = null;
   const shotDirection = camera.getWorldDirection(new THREE.Vector3());
   spawnCollisionDamage(car, shotDirection.clone().multiplyScalar(-1), shotDirection.multiplyScalar(18), 26);
-  playCrashSound(1);
+  playExplosionSound();
   if (data.body?.material?.color) data.body.material.color.lerp(new THREE.Color(0x151515), 0.72);
-
-  const blast = new THREE.Mesh(
-    new THREE.SphereGeometry(1, 18, 12),
-    new THREE.MeshBasicMaterial({ color: 0xff7a16, transparent: true, opacity: 0.9, depthWrite: false }),
-  );
-  blast.position.copy(car.position).add(new THREE.Vector3(0, 1.1, 0));
-  city.add(blast);
-  weaponEffects.push({ mesh: blast, bornAt: state.time, duration: 0.65, kind: "blast" });
+  const explosionOrigin = car.position.clone().add(new THREE.Vector3(0, 1.05, 0));
+  createVehicleExplosion(explosionOrigin);
+  damageCarsNearExplosion(explosionOrigin, car);
   statusEl.textContent = "Vehicle disabled";
 }
 
-function updateWeaponEffects() {
+function damageCarsNearExplosion(origin, sourceCar) {
+  const blastRadius = 12;
+  for (const nearby of collidableCars) {
+    if (nearby === sourceCar || !nearby.visible || nearby.userData.waitingForEntry) continue;
+    const offset = nearby.position.clone().sub(origin);
+    offset.y = 0;
+    const distance = offset.length();
+    if (distance >= blastRadius) continue;
+    const exposure = 1 - distance / blastRadius;
+    const outward = distance > 0.05 ? offset.normalize() : new THREE.Vector3(1, 0, 0);
+    const impulseSpeed = 4 + exposure * 18;
+    const blastVelocity = outward.clone().multiplyScalar(impulseSpeed);
+    const damageStrength = 7 + exposure * 22;
+    spawnCollisionDamage(nearby, outward.clone().multiplyScalar(-1), blastVelocity, damageStrength);
+
+    const data = nearby.userData;
+    data.hazard = true;
+    data.braking = true;
+    data.policePullOver = null;
+    data.policeRelease = null;
+    if (state.policeTarget === nearby) state.policeTarget = null;
+    data.policeShotHits = (data.policeShotHits || 0) + Math.max(1, Math.round(exposure * 3));
+    if (data.player) {
+      data.driveDamage = THREE.MathUtils.clamp((data.driveDamage || 0) + exposure * 0.72, 0, 1);
+      data.damagePull = Math.sign(outward.x || 1);
+      state.playerCrashed = exposure > 0.48;
+      state.crashed = true;
+      if (state.playerCrashed) restartBtn.hidden = false;
+    }
+
+    if (exposure > 0.78) {
+      data.speed = 0;
+      data.velocity.set(0, 0, 0);
+      data.angularVelocity = 0;
+      data.crashed = false;
+      data.immobilized = true;
+    } else {
+      startCrashSlide(nearby, blastVelocity, THREE.MathUtils.randFloatSpread(1.8) * exposure);
+    }
+  }
+}
+
+function createVehicleExplosion(origin) {
+  const addEffect = (mesh, duration, kind, velocity = null) => {
+    mesh.position.copy(origin);
+    city.add(mesh);
+    weaponEffects.push({ mesh, bornAt: state.time, duration, kind, velocity });
+  };
+  addEffect(new THREE.Mesh(
+    new THREE.SphereGeometry(1, 20, 14),
+    new THREE.MeshBasicMaterial({ color: 0xffc33b, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }),
+  ), 0.48, "fireball");
+  addEffect(new THREE.Mesh(
+    new THREE.SphereGeometry(1, 16, 12),
+    new THREE.MeshBasicMaterial({ color: 0x25282a, transparent: true, opacity: 0.72, depthWrite: false }),
+  ), 1.35, "smoke");
+  const shockwave = new THREE.Mesh(
+    new THREE.TorusGeometry(1, 0.09, 8, 32),
+    new THREE.MeshBasicMaterial({ color: 0xffd46a, transparent: true, opacity: 0.8, depthWrite: false }),
+  );
+  shockwave.rotation.x = Math.PI / 2;
+  addEffect(shockwave, 0.55, "shockwave");
+  for (let i = 0; i < 18; i++) {
+    const spark = new THREE.Mesh(
+      new THREE.SphereGeometry(0.055 + Math.random() * 0.055, 6, 4),
+      new THREE.MeshBasicMaterial({ color: i % 3 ? 0xff8a22 : 0xffe48a, transparent: true, opacity: 1 }),
+    );
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 4 + Math.random() * 9;
+    const velocity = new THREE.Vector3(Math.cos(angle) * speed, 3 + Math.random() * 8, Math.sin(angle) * speed);
+    addEffect(spark, 0.65 + Math.random() * 0.45, "spark", velocity);
+  }
+}
+
+function updateWeaponEffects(dt) {
   if (state.policePistol?.userData.muzzle) {
     state.policePistol.userData.muzzle.visible = state.policePistolDrawn && state.time - state.lastPoliceShot < 0.045;
     const recoil = Math.max(0, 1 - (state.time - state.lastPoliceShot) / 0.16);
@@ -1819,8 +1889,17 @@ function updateWeaponEffects() {
       weaponEffects.splice(i, 1);
       continue;
     }
-    effect.mesh.material.opacity = 1 - progress;
-    if (effect.kind === "blast") effect.mesh.scale.setScalar(0.5 + progress * 4.5);
+    effect.mesh.material.opacity = Math.max(0, 1 - progress);
+    if (effect.kind === "fireball") effect.mesh.scale.setScalar(0.45 + Math.sin(progress * Math.PI) * 3.2);
+    if (effect.kind === "smoke") {
+      effect.mesh.scale.setScalar(0.7 + progress * 4.6);
+      effect.mesh.position.y += dt * 1.05;
+    }
+    if (effect.kind === "shockwave") effect.mesh.scale.setScalar(0.5 + progress * 6.5);
+    if (effect.kind === "spark" && effect.velocity) {
+      effect.velocity.y -= 15 * dt;
+      effect.mesh.position.addScaledVector(effect.velocity, dt);
+    }
   }
 }
 
@@ -1828,17 +1907,75 @@ function playPoliceShotSound() {
   const audio = ensureAudio();
   if (!audio) return;
   const now = audio.currentTime;
-  const oscillator = audio.createOscillator();
-  const gain = audio.createGain();
-  oscillator.type = "square";
-  oscillator.frequency.setValueAtTime(170, now);
-  oscillator.frequency.exponentialRampToValueAtTime(55, now + 0.1);
-  gain.gain.setValueAtTime(0.22, now);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.13);
-  oscillator.connect(gain);
-  gain.connect(audio.destination);
-  oscillator.start(now);
-  oscillator.stop(now + 0.14);
+  const duration = 0.2;
+  const buffer = audio.createBuffer(1, Math.floor(audio.sampleRate * duration), audio.sampleRate);
+  const samples = buffer.getChannelData(0);
+  for (let i = 0; i < samples.length; i++) {
+    const t = i / samples.length;
+    samples[i] = (Math.random() * 2 - 1) * Math.exp(-t * 18);
+  }
+  const crack = audio.createBufferSource();
+  const crackFilter = audio.createBiquadFilter();
+  const crackGain = audio.createGain();
+  crack.buffer = buffer;
+  crackFilter.type = "bandpass";
+  crackFilter.frequency.value = 1900;
+  crackFilter.Q.value = 0.75;
+  crackGain.gain.setValueAtTime(0.42, now);
+  crackGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+  crack.connect(crackFilter);
+  crackFilter.connect(crackGain);
+  crackGain.connect(audio.destination);
+  crack.start(now);
+
+  const thump = audio.createOscillator();
+  const thumpGain = audio.createGain();
+  thump.type = "triangle";
+  thump.frequency.setValueAtTime(135, now);
+  thump.frequency.exponentialRampToValueAtTime(48, now + 0.11);
+  thumpGain.gain.setValueAtTime(0.3, now);
+  thumpGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+  thump.connect(thumpGain);
+  thumpGain.connect(audio.destination);
+  thump.start(now);
+  thump.stop(now + 0.15);
+}
+
+function playExplosionSound() {
+  const audio = ensureAudio();
+  if (!audio) return;
+  const now = audio.currentTime;
+  const duration = 1.15;
+  const buffer = audio.createBuffer(1, Math.floor(audio.sampleRate * duration), audio.sampleRate);
+  const samples = buffer.getChannelData(0);
+  for (let i = 0; i < samples.length; i++) {
+    const t = i / samples.length;
+    samples[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 2.1);
+  }
+  const blast = audio.createBufferSource();
+  const filter = audio.createBiquadFilter();
+  const blastGain = audio.createGain();
+  blast.buffer = buffer;
+  filter.type = "lowpass";
+  filter.frequency.setValueAtTime(1500, now);
+  filter.frequency.exponentialRampToValueAtTime(180, now + duration);
+  blastGain.gain.setValueAtTime(0.48, now);
+  blastGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+  blast.connect(filter);
+  filter.connect(blastGain);
+  blastGain.connect(audio.destination);
+  blast.start(now);
+  const boom = audio.createOscillator();
+  const boomGain = audio.createGain();
+  boom.type = "sine";
+  boom.frequency.setValueAtTime(82, now);
+  boom.frequency.exponentialRampToValueAtTime(28, now + 0.7);
+  boomGain.gain.setValueAtTime(0.55, now);
+  boomGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.75);
+  boom.connect(boomGain);
+  boomGain.connect(audio.destination);
+  boom.start(now);
+  boom.stop(now + 0.8);
 }
 
 function togglePoliceMode() {
@@ -4327,7 +4464,7 @@ function getCockpitImpactMotion(car) {
 
 function updateHud() {
   document.body.classList.toggle("security-view", state.securityRoom);
-  document.body.classList.toggle("pistol-view", state.policePistolDrawn);
+  pistolCrosshairEl.hidden = !state.policePistolDrawn;
   const speed = Math.round(Math.abs(state.player.userData.speed) * 2.237);
   const dashboardVisible = state.cameraView === 2 && !state.onFoot && !state.securityRoom && !state.policeInterview;
   const playerData = state.player.userData;
