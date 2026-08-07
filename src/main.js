@@ -128,6 +128,7 @@ const state = {
   policeConversation: null,
   introActive: document.documentElement.dataset.intro === "new",
   cameraView: 0,
+  backupCameraActive: false,
   cockpitLook: { yaw: 0, pitch: 0, lastMovedAt: -Infinity },
   botSensitivity: 0,
   trafficDensity: 1,
@@ -1087,7 +1088,7 @@ function renderCockpitMirrors() {
     renderer.clear();
     renderer.render(scene, spec.view);
   }
-  if ((car.userData.speed || 0) < -0.25) {
+  if (state.backupCameraActive) {
     cockpit.userData.backupGuides.visible = true;
     backupCamera.position.copy(car.localToWorld(new THREE.Vector3(0, 1.05, -2.08)));
     backupCamera.lookAt(car.localToWorld(new THREE.Vector3(0, 0.12, -18)));
@@ -4059,9 +4060,10 @@ function updateHud() {
   if (playerData.policeKit) playerData.policeKit.visible = !dashboardVisible;
   if (dashboardVisible) {
     const data = state.player.userData;
-    const backupActive = (data.speed || 0) < -0.25;
+    if ((data.speed || 0) < -0.25) state.backupCameraActive = true;
+    if ((data.speed || 0) > 0.25) state.backupCameraActive = false;
     const cockpit = data.cockpit;
-    cockpit.userData.displayMaterial.map = backupActive ? backupCameraTarget.texture : cockpit.userData.displayTexture;
+    cockpit.userData.displayMaterial.map = state.backupCameraActive ? backupCameraTarget.texture : cockpit.userData.displayTexture;
     cockpit.userData.displayMaterial.needsUpdate = true;
     const speedRatio = THREE.MathUtils.clamp(Math.abs(data.speed || 0) / 36, 0, 1);
     const rpmRatio = Math.max(speedRatio, data.revRatio || 0);
@@ -4580,6 +4582,7 @@ function restartCity() {
   state.securitySelected = null;
   state.securityFeedCursor = 0;
   state.cameraView = 0;
+  state.backupCameraActive = false;
   state.cockpitLook.yaw = 0;
   state.cockpitLook.pitch = 0;
   state.cockpitLook.lastMovedAt = -Infinity;
