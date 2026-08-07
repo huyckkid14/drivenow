@@ -135,6 +135,8 @@ const state = {
   policeAim: { yaw: 0, pitch: 0 },
   policeAimZoom: 0,
   lastPoliceShot: -10,
+  policeTriggerHeld: false,
+  policeTriggerStartedAt: -10,
   introActive: document.documentElement.dataset.intro === "new",
   cameraView: 0,
   backupCameraActive: false,
@@ -1731,7 +1733,7 @@ function togglePolicePistol() {
   if (state.policePistolDrawn) {
     state.policeAim.yaw = state.pedestrian.rotation.y;
     state.policeAim.pitch = 0;
-    statusEl.textContent = "Pistol drawn — hold Shift to aim, click to fire, P to holster";
+    statusEl.textContent = "Pistol drawn — click to fire · hold for automatic · Shift to aim · P to holster";
     renderer.domElement.requestPointerLock?.().catch?.(() => {});
   } else {
     document.exitPointerLock?.();
@@ -1742,12 +1744,14 @@ function togglePolicePistol() {
 function holsterPolicePistol() {
   state.policePistolDrawn = false;
   state.policeAimZoom = 0;
+  state.policeTriggerHeld = false;
   if (state.policePistol) state.policePistol.visible = false;
   if (document.pointerLockElement === renderer.domElement) document.exitPointerLock?.();
 }
 
-function firePolicePistol() {
-  if (!state.policePistolDrawn || state.time - state.lastPoliceShot < 0.18) return;
+function firePolicePistol(automatic = false) {
+  const shotInterval = automatic ? 0.085 : 0.18;
+  if (!state.policePistolDrawn || state.time - state.lastPoliceShot < shotInterval) return;
   state.lastPoliceShot = state.time;
   state.policePistol.userData.muzzle.visible = true;
   playPoliceShotSound();
@@ -2039,6 +2043,9 @@ function createVehicleExplosion(origin) {
 }
 
 function updateWeaponEffects(dt) {
+  if (state.policeTriggerHeld && state.time - state.policeTriggerStartedAt >= 0.2) {
+    firePolicePistol(true);
+  }
   if (state.policePistol?.userData.muzzle) {
     state.policePistol.userData.muzzle.visible = state.policePistolDrawn && state.time - state.lastPoliceShot < 0.045;
     const recoil = Math.max(0, 1 - (state.time - state.lastPoliceShot) / 0.16);
@@ -4681,7 +4688,7 @@ function updateHud() {
       : `CAMERA ${state.securitySelected + 1} HIGHLIGHTED — Esc to view all — C to exit`;
   } else if (state.onFoot) {
     if (state.policePistolDrawn) {
-      statusEl.textContent = "Pistol drawn — Shift to aim · mouse to look · click to fire · P to holster";
+      statusEl.textContent = "Pistol drawn — Shift to aim · click or hold for automatic fire · P to holster";
     } else {
       const distance = state.pedestrian.position.distanceTo(state.player.position);
       statusEl.textContent = state.player.userData.crashed || state.player.userData.immobilized
@@ -4816,7 +4823,9 @@ function onPointerDown(event) {
     return;
   }
   if (state.policePistolDrawn) {
-    firePolicePistol();
+    state.policeTriggerHeld = true;
+    state.policeTriggerStartedAt = state.time;
+    firePolicePistol(false);
     event.preventDefault();
     return;
   }
@@ -4868,6 +4877,7 @@ function onPointerMove(event) {
 }
 
 function onPointerUp() {
+  state.policeTriggerHeld = false;
   state.crashLook.active = false;
 }
 
