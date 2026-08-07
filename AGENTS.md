@@ -45,7 +45,7 @@
 
 - Arrow keys: drive or walk.
 - Space: handbrake drift.
-- `Q` / `E`: turn signals.
+- `Q` / `E`: turn signals while driving; hold `Q` for first-person grenade aiming and release it to throw while walking.
 - `Z`: hazards.
 - `C`: enter/exit cars and context interactions.
 - `D`: cycle normal, hood, and 3D cockpit camera views.

@@ -53,6 +53,7 @@ const roadSegments = [];
 const collidableCars = [];
 const damagePieces = [];
 const weaponEffects = [];
+const grenades = [];
 const exhaustSmoke = [];
 const npcPedestrians = [];
 const crashResponders = [];
@@ -137,6 +138,11 @@ const state = {
   lastPoliceShot: -10,
   policeTriggerHeld: false,
   policeTriggerStartedAt: -10,
+  grenadeCharging: false,
+  grenadeAimActive: false,
+  grenadeChargeStartedAt: -10,
+  grenadeChargeMeter: null,
+  grenadeCameraSnapBack: false,
   introActive: document.documentElement.dataset.intro === "new",
   cameraView: 0,
   backupCameraActive: false,
@@ -783,6 +789,46 @@ function createPedestrian() {
   beacon.visible = false;
   city.add(beacon);
   state.carBeacon = beacon;
+
+  const chargeMeter = new THREE.Group();
+  const meterBack = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.7, 0.28),
+    new THREE.MeshBasicMaterial({ color: 0x11171a, transparent: true, opacity: 0.9, depthTest: false, depthWrite: false }),
+  );
+  const meterFill = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.5, 0.16),
+    new THREE.MeshBasicMaterial({ color: 0x55d978, depthTest: false, depthWrite: false }),
+  );
+  meterFill.position.z = 0.012;
+  meterFill.scale.x = 0.001;
+  meterFill.userData.fullWidth = 1.5;
+  meterBack.renderOrder = 50;
+  meterFill.renderOrder = 51;
+  chargeMeter.add(meterBack, meterFill);
+  chargeMeter.visible = false;
+  chargeMeter.renderOrder = 50;
+  chargeMeter.userData.fill = meterFill;
+  city.add(chargeMeter);
+  state.grenadeChargeMeter = chargeMeter;
+}
+
+function updateGrenadeChargeMeter() {
+  const meter = state.grenadeChargeMeter;
+  const person = state.pedestrian;
+  if (!meter || !person) return;
+  meter.visible = state.grenadeCharging && state.onFoot && person.visible && !state.securityRoom;
+  if (!meter.visible) return;
+  const charge = THREE.MathUtils.clamp((state.time - state.grenadeChargeStartedAt) / 2, 0, 1);
+  const fill = meter.userData.fill;
+  fill.scale.x = Math.max(0.001, charge);
+  fill.position.x = -(fill.userData.fullWidth * (1 - charge)) / 2;
+  fill.material.color.set(charge < 0.5 ? 0x55d978 : charge < 0.85 ? 0xffca3a : 0xff5a45);
+  if (state.grenadeAimActive) {
+    meter.position.copy(camera.localToWorld(new THREE.Vector3(0, -0.48, -2.4)));
+  } else {
+    meter.position.copy(person.position).add(new THREE.Vector3(0, 2.75, 0));
+  }
+  meter.quaternion.copy(camera.quaternion);
 }
 
 function pedestrianLimb(width, length, material, x, y) {
@@ -1087,6 +1133,7 @@ function animate() {
   updatePieceCarPushes();
   updateDamagePieces(dt);
   updateWeaponEffects(dt);
+  updateGrenades(dt);
   updateExhaustSmoke(dt);
   updatePlayer(dt);
   updatePedestrian(dt);
@@ -1102,6 +1149,7 @@ function animate() {
   updateCollisions(dt);
   updateSignals(dt);
   updateCamera(dt);
+  updateGrenadeChargeMeter();
   updateHud();
   if (state.securityRoom) renderSecurityFeeds();
   else renderDrivingScene();
@@ -2155,6 +2203,91 @@ function playExplosionSound() {
   boomGain.connect(audio.destination);
   boom.start(now);
   boom.stop(now + 0.8);
+}
+
+function throwGrenade(chargeSeconds = 0) {
+  if (!state.onFoot || state.securityRoom || state.carTransition || !state.pedestrian?.visible) return;
+  const person = state.pedestrian;
+  const forward = new THREE.Vector3(
+    Math.sin(state.policeAim.yaw) * Math.cos(state.policeAim.pitch),
+    Math.sin(state.policeAim.pitch),
+    Math.cos(state.policeAim.yaw) * Math.cos(state.policeAim.pitch),
+  ).normalize();
+  const charge = THREE.MathUtils.clamp(chargeSeconds / 2, 0, 1);
+  const grenade = new THREE.Group();
+  const shell = new THREE.Mesh(
+    new THREE.SphereGeometry(0.18, 12, 8),
+    new THREE.MeshStandardMaterial({ color: 0x35452a, roughness: 0.88, metalness: 0.18 }),
+  );
+  shell.scale.y = 1.28;
+  const cap = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.075, 0.09, 0.11, 8),
+    new THREE.MeshStandardMaterial({ color: 0x20251e, roughness: 0.62, metalness: 0.55 }),
+  );
+  cap.position.y = 0.24;
+  const fuse = new THREE.Mesh(
+    new THREE.SphereGeometry(0.035, 6, 4),
+    new THREE.MeshBasicMaterial({ color: 0xff8a2b }),
+  );
+  fuse.position.set(0.07, 0.3, 0);
+  grenade.add(shell, cap, fuse);
+  grenade.position.copy(person.position).add(new THREE.Vector3(0, 1.55, 0)).addScaledVector(forward, 0.75);
+  grenade.userData.ignoreBulletRay = true;
+  city.add(grenade);
+  grenades.push({
+    mesh: grenade,
+    fuse,
+    velocity: forward.multiplyScalar(THREE.MathUtils.lerp(8, 25, charge)).add(
+      new THREE.Vector3(0, THREE.MathUtils.lerp(6.2, 10.5, charge), 0),
+    ),
+    angularVelocity: new THREE.Vector3(8, 5, 7),
+    thrownAt: state.time,
+    explodeAt: state.time + 3,
+  });
+  statusEl.textContent = charge > 0.75
+    ? "Grenade thrown at maximum strength — 3 second fuse"
+    : "Grenade thrown — 3 second fuse";
+}
+
+function updateGrenades(dt) {
+  for (let i = grenades.length - 1; i >= 0; i--) {
+    const grenade = grenades[i];
+    if (state.time >= grenade.explodeAt) {
+      const origin = grenade.mesh.position.clone();
+      city.remove(grenade.mesh);
+      grenades.splice(i, 1);
+      createVehicleExplosion(origin);
+      playExplosionSound();
+      damageCarsNearExplosion(origin, null);
+      damagePedestriansNearExplosion(origin);
+      continue;
+    }
+    grenade.velocity.y -= 15 * dt;
+    const previous = grenade.mesh.position.clone();
+    grenade.mesh.position.addScaledVector(grenade.velocity, dt);
+    grenade.mesh.rotation.x += grenade.angularVelocity.x * dt;
+    grenade.mesh.rotation.y += grenade.angularVelocity.y * dt;
+    grenade.mesh.rotation.z += grenade.angularVelocity.z * dt;
+    const hitBuilding = buildingObstacles.some((obstacle) =>
+      Math.abs(grenade.mesh.position.x - obstacle.x) < obstacle.halfX + 0.18 &&
+      Math.abs(grenade.mesh.position.z - obstacle.z) < obstacle.halfZ + 0.18,
+    );
+    if (hitBuilding) {
+      grenade.mesh.position.copy(previous);
+      grenade.velocity.x *= -0.45;
+      grenade.velocity.z *= -0.45;
+    }
+    if (grenade.mesh.position.y <= 0.2) {
+      grenade.mesh.position.y = 0.2;
+      if (Math.abs(grenade.velocity.y) > 1.2) grenade.velocity.y = Math.abs(grenade.velocity.y) * 0.42;
+      else grenade.velocity.y = 0;
+      grenade.velocity.x *= Math.max(0, 1 - dt * 2.8);
+      grenade.velocity.z *= Math.max(0, 1 - dt * 2.8);
+      grenade.angularVelocity.multiplyScalar(Math.max(0, 1 - dt * 2.2));
+    }
+    const blink = Math.floor((grenade.explodeAt - state.time) * 8) % 2 === 0;
+    grenade.fuse.visible = blink;
+  }
 }
 
 function togglePoliceMode() {
@@ -4560,7 +4693,7 @@ function updateCamera(dt) {
   }
   if (state.onFoot && state.pedestrian) {
     const person = state.pedestrian;
-    if (state.policePistolDrawn) {
+    if (state.policePistolDrawn || state.grenadeAimActive) {
       const eye = person.position.clone().add(new THREE.Vector3(0, 1.86, 0));
       const direction = new THREE.Vector3(
         Math.sin(state.policeAim.yaw) * Math.cos(state.policeAim.pitch),
@@ -4573,7 +4706,12 @@ function updateCamera(dt) {
     }
     const walkForward = new THREE.Vector3(Math.sin(person.rotation.y), 0, Math.cos(person.rotation.y));
     const target = person.position.clone().addScaledVector(walkForward, -15).add(new THREE.Vector3(0, 11, 0));
-    camera.position.lerp(target, 1 - Math.pow(0.001, dt));
+    if (state.grenadeCameraSnapBack) {
+      camera.position.copy(target);
+      state.grenadeCameraSnapBack = false;
+    } else {
+      camera.position.lerp(target, 1 - Math.pow(0.001, dt));
+    }
     camera.lookAt(person.position.clone().addScaledVector(walkForward, 8).add(new THREE.Vector3(0, 2.2, 0)));
     return;
   }
@@ -4649,7 +4787,7 @@ function getCockpitImpactMotion(car) {
 
 function updateHud() {
   document.body.classList.toggle("security-view", state.securityRoom);
-  pistolCrosshairEl.hidden = !state.policePistolDrawn;
+  pistolCrosshairEl.hidden = !(state.policePistolDrawn || state.grenadeAimActive);
   const aimingDownSights = state.policePistolDrawn && state.policeAimZoom > 0.35;
   aimVignetteEl.hidden = !aimingDownSights;
   pistolCrosshairEl.classList.toggle("aiming", aimingDownSights);
@@ -4687,7 +4825,10 @@ function updateHud() {
       ? `ALL ${securityCameras.length} SECURITY FEEDS — click one to enlarge — C to exit`
       : `CAMERA ${state.securitySelected + 1} HIGHLIGHTED — Esc to view all — C to exit`;
   } else if (state.onFoot) {
-    if (state.policePistolDrawn) {
+    if (state.grenadeCharging) {
+      const chargePercent = Math.round(THREE.MathUtils.clamp((state.time - state.grenadeChargeStartedAt) / 2, 0, 1) * 100);
+      statusEl.textContent = `Charging grenade throw ${chargePercent}% — release Q`;
+    } else if (state.policePistolDrawn) {
       statusEl.textContent = "Pistol drawn — Shift to aim · click or hold for automatic fire · P to holster";
     } else {
       const distance = state.pedestrian.position.distanceTo(state.player.position);
@@ -4757,6 +4898,11 @@ function onKeyDown(event) {
     event.preventDefault();
     event.stopPropagation();
   }
+  if (event.repeat && key === "q" && state.grenadeCharging && !state.grenadeAimActive) {
+    state.grenadeAimActive = true;
+    const pointerLockRequest = renderer.domElement.requestPointerLock?.();
+    pointerLockRequest?.catch?.(() => {});
+  }
   if (event.repeat && ["q", "e", "z", "c", "d", "h", "p", "o", "1"].includes(key)) return;
   if (key === "escape" && state.securityRoom) {
     state.securitySelected = null;
@@ -4764,7 +4910,23 @@ function onKeyDown(event) {
     return;
   }
   if (state.toggleHeld.has(key)) return;
-  if (key === "q") toggleSignal("left");
+  if (key === "q") {
+    if (state.onFoot && !state.securityRoom) {
+      state.grenadeCharging = true;
+      state.grenadeAimActive = false;
+      state.grenadeChargeStartedAt = state.time;
+      state.policeAim.yaw = state.pedestrian.rotation.y;
+      state.policeAim.pitch = 0;
+      renderer.domElement.focus();
+      window.setTimeout(() => {
+        if (!state.grenadeCharging || !keys.has("q")) return;
+        state.grenadeAimActive = true;
+        const pointerLockRequest = renderer.domElement.requestPointerLock?.();
+        pointerLockRequest?.catch?.(() => {});
+      }, 220);
+      statusEl.textContent = "Charging grenade throw — release Q to throw";
+    } else if (!state.onFoot) toggleSignal("left");
+  }
   if (key === "e") toggleSignal("right");
   if (key === "z") toggleHazards();
   if (key === "c") toggleCarExit();
@@ -4800,7 +4962,10 @@ function onKeyPress(event) {
   event.preventDefault();
   event.stopPropagation();
   if (state.toggleHeld.has(key)) return;
-  if (key === "q") toggleSignal("left");
+  if (key === "q") {
+    if (state.onFoot) return;
+    toggleSignal("left");
+  }
   if (key === "e") toggleSignal("right");
   if (key === "z") toggleHazards();
   if (key === "c") toggleCarExit();
@@ -4811,6 +4976,17 @@ function onKeyUp(event) {
   const key = normalizeKey(event);
   if (!key) return;
   if (key === "h") stopPlayerHorn();
+  if (key === "q" && state.grenadeCharging) {
+    const chargeSeconds = Math.max(0, state.time - state.grenadeChargeStartedAt);
+    const wasAimingGrenade = state.grenadeAimActive;
+    state.grenadeCharging = false;
+    state.grenadeAimActive = false;
+    throwGrenade(chargeSeconds);
+    if (!state.policePistolDrawn) {
+      state.grenadeCameraSnapBack = wasAimingGrenade;
+      if (document.pointerLockElement === renderer.domElement) document.exitPointerLock?.();
+    }
+  }
   keys.delete(key);
   state.toggleHeld.delete(key);
 }
@@ -4850,7 +5026,7 @@ function onPointerDown(event) {
 }
 
 function onPointerMove(event) {
-  if (state.policePistolDrawn) {
+  if (state.policePistolDrawn || state.grenadeAimActive) {
     state.policeAim.yaw -= event.movementX * 0.0025;
     state.policeAim.pitch = THREE.MathUtils.clamp(state.policeAim.pitch - event.movementY * 0.0022, -1.15, 1.15);
     state.pedestrian.rotation.y = state.policeAim.yaw;
@@ -5178,7 +5354,12 @@ function stopPlayerHorn() {
 }
 
 function restartCity() {
+  state.grenadeCharging = false;
+  state.grenadeAimActive = false;
+  state.grenadeCameraSnapBack = false;
   holsterPolicePistol();
+  for (const grenade of grenades) city.remove(grenade.mesh);
+  grenades.length = 0;
   for (const effect of weaponEffects) {
     city.remove(effect.mesh);
     effect.mesh.geometry?.dispose();
@@ -5194,6 +5375,8 @@ function restartCity() {
   document.body.classList.remove("police-interview");
   policeInteractionEl.hidden = true;
   if (state.pedestrian) city.remove(state.pedestrian);
+  if (state.grenadeChargeMeter) city.remove(state.grenadeChargeMeter);
+  state.grenadeChargeMeter = null;
   if (state.carBeacon) city.remove(state.carBeacon);
   if (state.crashMeeting?.arrow) city.remove(state.crashMeeting.arrow);
   for (const responder of crashResponders) {
