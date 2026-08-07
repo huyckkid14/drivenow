@@ -1746,22 +1746,63 @@ function firePolicePistol() {
   playPoliceShotSound();
 
   policeRaycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-  const hits = policeRaycaster.intersectObjects(cars, true);
+  const hits = policeRaycaster.intersectObjects(city.children, true);
   let target = null;
+  let surfaceHit = null;
   let hitPoint = camera.position.clone().addScaledVector(camera.getWorldDirection(new THREE.Vector3()), 90);
   for (const hit of hits) {
+    if (hit.object.userData.ignoreBulletRay || !hit.face) continue;
+    surfaceHit = hit;
+    hitPoint = hit.point.clone();
     let car = hit.object;
     while (car.parent && !cars.includes(car)) car = car.parent;
-    if (!cars.includes(car) || car.userData.player || !car.visible || car.userData.waitingForEntry) continue;
-    target = car;
-    hitPoint = hit.point.clone();
+    if (cars.includes(car) && !car.userData.player && car.visible && !car.userData.waitingForEntry) target = car;
     break;
   }
   createPoliceShotTracer(hitPoint);
+  if (surfaceHit) createBulletHole(surfaceHit);
   if (!target || target.userData.immobilized) return;
   target.userData.policeShotHits = (target.userData.policeShotHits || 0) + 1;
   statusEl.textContent = `Vehicle hit ${target.userData.policeShotHits}/5`;
   if (target.userData.policeShotHits >= 5) explodePoliceShotCar(target);
+}
+
+function createBulletHole(hit) {
+  const surface = hit.object;
+  surface.updateWorldMatrix(true, false);
+  const normalMatrix = new THREE.Matrix3().getNormalMatrix(surface.matrixWorld);
+  const worldNormal = hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
+  const mark = new THREE.Group();
+  mark.userData.ignoreBulletRay = true;
+
+  const chippedEdge = new THREE.Mesh(
+    new THREE.CircleGeometry(0.115, 9),
+    new THREE.MeshBasicMaterial({
+      color: 0x5b554d,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    }),
+  );
+  const darkCenter = new THREE.Mesh(
+    new THREE.CircleGeometry(0.067, 12),
+    new THREE.MeshBasicMaterial({
+      color: 0x080706,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -3,
+      polygonOffsetUnits: -3,
+    }),
+  );
+  chippedEdge.userData.ignoreBulletRay = true;
+  darkCenter.userData.ignoreBulletRay = true;
+  darkCenter.position.z = 0.003;
+  mark.add(chippedEdge, darkCenter);
+  mark.position.copy(hit.point).addScaledVector(worldNormal, 0.014);
+  mark.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), worldNormal);
+  city.add(mark);
+  surface.attach(mark);
 }
 
 function createPoliceShotTracer(hitPoint) {
