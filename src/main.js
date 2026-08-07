@@ -1906,7 +1906,7 @@ function updatePoliceMode(dt) {
     car.rotation.y = stop.roadYaw;
     stop.complete = true;
     revealPulledOverDriver(car);
-    statusEl.textContent = "Vehicle pulled over — driver window lowered — press O to stop siren";
+    statusEl.textContent = "Vehicle pulled over — driver window lowered — press O to toggle siren";
     return;
   }
   delta.normalize();
@@ -2090,7 +2090,7 @@ function updateBots(dt) {
     }
 
     const wasPoliceClearing = Boolean(data.policeClearing);
-    const policeClearance = getPoliceTrafficClearance(bot);
+    const policeClearance = getPoliceTrafficClearance(bot) || getPoliceSirenClearance(bot);
     data.policeClearing = Boolean(policeClearance);
     if (policeClearance) {
       data.policeYielded = true;
@@ -2339,6 +2339,45 @@ function getPoliceTrafficClearance(bot) {
   }
   if (along < 0 && along > -22) {
     return { direction: forward.clone().multiplyScalar(-1), speed: 5.5 };
+  }
+  return null;
+}
+
+function getPoliceSirenClearance(bot) {
+  if (!state.policeMode || !state.policeSiren || state.onFoot || bot === state.policeTarget) return null;
+  const policeCar = state.player;
+  const policeForward = getForward(policeCar).normalize();
+  const policeRight = new THREE.Vector3(policeForward.z, 0, -policeForward.x);
+  const botForward = dirs[bot.userData.dir] || getForward(bot).normalize();
+  const delta = bot.position.clone().sub(policeCar.position);
+  const distance = delta.length();
+  const along = delta.dot(policeForward);
+  const lateral = Math.abs(delta.dot(policeRight));
+  const alignment = botForward.dot(policeForward);
+
+  // Cars crossing the emergency vehicle's immediate route clear it using
+  // whichever physical forward/reverse movement takes them away fastest.
+  if (Math.abs(alignment) < 0.55 && distance < 24 && Math.abs(along) < 18) {
+    const routeEnd = policeCar.position.clone().addScaledVector(policeForward, 28);
+    return {
+      direction: policeRouteClearingDirection(bot, botForward, policeCar.position, routeEnd),
+      speed: 4.5,
+    };
+  }
+
+  if (lateral > 5.4) return null;
+  // Head-on traffic physically backs away without rotating around.
+  if (alignment < -0.65 && along > -4 && along < 32) {
+    return { direction: botForward.clone().multiplyScalar(-1), speed: 5.5 };
+  }
+  if (alignment < 0.65) return null;
+  // Traffic ahead keeps moving to open the corridor; traffic approaching the
+  // police car from behind slows instead of crowding it.
+  if (along > 0 && along < 42) {
+    return { direction: botForward.clone(), speed: Math.max(14, bot.userData.desiredSpeed || 14) };
+  }
+  if (along < 0 && along > -24) {
+    return { direction: botForward.clone(), speed: 3.5 };
   }
   return null;
 }
@@ -4154,7 +4193,7 @@ function updateHud() {
       ? "POLICE MODE — click a bot car to initiate a stop"
       : stop.complete
         ? state.policeSiren
-          ? "Vehicle pulled over — press 1 to speak with driver — O stops siren"
+          ? "Vehicle pulled over — press 1 to speak with driver — O toggles siren"
           : "Vehicle pulled over — press 1 to speak with driver"
         : state.time < stop.acknowledgeUntil
           ? "Target acknowledged — hazards on"
@@ -4232,9 +4271,14 @@ function onKeyDown(event) {
   if (key === "h" && !state.onFoot && !state.securityRoom) startPlayerHorn();
   if (key === "p") togglePoliceMode();
   if (key === "1") togglePoliceInterview();
-  if (key === "o" && state.policeSiren) {
-    stopPoliceSiren();
-    statusEl.textContent = "Police siren off";
+  if (key === "o" && state.policeMode && !state.onFoot && !state.securityRoom) {
+    if (state.policeSiren) {
+      stopPoliceSiren();
+      statusEl.textContent = "Police siren off";
+    } else {
+      startPoliceSiren();
+      statusEl.textContent = "Police siren on — traffic yielding";
+    }
   }
   if (["q", "e", "z", "c", "d", "h", "p", "o", "1"].includes(key)) state.toggleHeld.add(key);
 }

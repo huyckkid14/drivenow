@@ -52,7 +52,7 @@
 - Mouse movement: look around while using the 3D cockpit view.
 - `H`: hold the horn.
 - `P`: toggle police mode.
-- `O`: stop the police siren.
+- `O`: toggle the police siren.
 - `1`: begin or end the close-up driver interaction after the selected vehicle has completed its pull-over.
 
 ## Git workflow
