@@ -118,6 +118,7 @@ const state = {
   lastCrashSound: -10,
   lastHonkSound: -10,
   greenBlockTimer: 0,
+  greenIntersectionPass: null,
   doorMotionStart: -10,
   carTransition: null,
   crashMeeting: null,
@@ -2884,14 +2885,27 @@ function updateDriverReactions(dt) {
   }
 
   const signal = playerSignalInfo();
+  if (signal && signal.light.state === "green" && (data.speed || 0) > 0.35) {
+    state.greenIntersectionPass = {
+      ix: signal.ix,
+      iz: signal.iz,
+      axis: signal.axis,
+      dir: signal.dir,
+    };
+  }
+  const playerHasGreenRightOfWay = hasGreenIntersectionRightOfWay(player, data);
   const botBehind = findBotBehindPlayer(19);
-  const blockingGreen = signal && signal.light.state === "green" && Math.abs(data.speed) < 0.6 && botBehind;
+  const blockingGreen = signal &&
+    signal.light.state === "green" &&
+    Math.abs(data.speed || 0) < 0.08 &&
+    !keys.has("arrowup") &&
+    botBehind;
   state.greenBlockTimer = blockingGreen ? state.greenBlockTimer + dt : 0;
   if (state.greenBlockTimer > 1.1) {
     requestHonk(botBehind, "short");
   }
 
-  if (signal && signal.light.state !== "green" && signal.along < -CAR_HALF_LENGTH * 0.45) {
+  if (signal && signal.light.state !== "green" && signal.along < -CAR_HALF_LENGTH * 0.45 && !playerHasGreenRightOfWay) {
     const conflictingBot = findConflictingIntersectionBot(signal);
     if (conflictingBot) requestHonk(conflictingBot, "severe");
   }
@@ -2923,7 +2937,7 @@ function updateDriverReactions(dt) {
       (botData.speed > 1 || closestSoon < CAR_RADIUS * 0.9) &&
       closestSoon < CAR_RADIUS * 1.28 &&
       (previousDistance - distanceToPlayer > 1.6 || (previousDistance > 11 && distanceToPlayer < 6.5));
-    if (suddenClose && !waitingAtRed) requestHonk(bot, "danger");
+    if (suddenClose && !waitingAtRed && !playerHasGreenRightOfWay) requestHonk(bot, "danger");
     botData.lastPlayerDistance = distanceToPlayer;
 
     const ahead = delta.dot(forward);
@@ -2933,8 +2947,29 @@ function updateDriverReactions(dt) {
     const playerForward = getForward(player);
     const crossing = Math.abs(playerForward.dot(forward)) < 0.72;
     const abruptBlock = botData.speed > Math.max(4, Math.abs(data.speed) + 4);
-    if ((crossing || abruptBlock) && !waitingAtRed) requestHonk(bot, "angry");
+    if ((crossing || abruptBlock) && !waitingAtRed && !playerHasGreenRightOfWay) requestHonk(bot, "angry");
   }
+}
+
+function hasGreenIntersectionRightOfWay(player, data) {
+  const pass = state.greenIntersectionPass;
+  if (!pass) return false;
+  if (state.onFoot || (data.speed || 0) < -0.1) {
+    state.greenIntersectionPass = null;
+    return false;
+  }
+  const center = new THREE.Vector3(pass.ix, 0, pass.iz);
+  const forward = dirs[pass.dir];
+  const offset = player.position.clone().sub(center);
+  const progress = offset.dot(forward);
+  const lateralSq = Math.max(0, offset.lengthSq() - progress * progress);
+  const fullyClear = progress > ROAD_HALF + CAR_HALF_LENGTH + 3;
+  const leftIntersectionPath = lateralSq > (ROAD_HALF + 2.5) ** 2;
+  if (fullyClear || leftIntersectionPath) {
+    state.greenIntersectionPass = null;
+    return false;
+  }
+  return true;
 }
 
 function isWaitingAtRedLight(bot) {
@@ -4587,6 +4622,7 @@ function restartCity() {
   state.cockpitLook.pitch = 0;
   state.cockpitLook.lastMovedAt = -Infinity;
   state.greenBlockTimer = 0;
+  state.greenIntersectionPass = null;
   state.doorMotionStart = -10;
   state.carTransition = null;
   state.crashLook.active = false;
