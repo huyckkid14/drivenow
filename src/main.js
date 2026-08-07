@@ -54,6 +54,7 @@ const collidableCars = [];
 const damagePieces = [];
 const weaponEffects = [];
 const grenades = [];
+const rockets = [];
 const exhaustSmoke = [];
 const npcPedestrians = [];
 const crashResponders = [];
@@ -133,9 +134,12 @@ const state = {
   policeConversation: null,
   policePistolDrawn: false,
   policePistol: null,
+  policeRpg: null,
+  policeWeapon: "pistol",
   policeAim: { yaw: 0, pitch: 0 },
   policeAimZoom: 0,
   lastPoliceShot: -10,
+  lastRpgShot: -10,
   policeTriggerHeld: false,
   policeTriggerStartedAt: -10,
   grenadeCharging: false,
@@ -208,6 +212,7 @@ function init() {
   createPlayer();
   createPedestrian();
   createPolicePistol();
+  createPoliceRpg();
   createBots();
   createSkylineDetails();
 
@@ -872,6 +877,29 @@ function createPolicePistol() {
   state.policePistol = pistol;
 }
 
+function createPoliceRpg() {
+  const rpg = new THREE.Group();
+  const tubeMat = new THREE.MeshStandardMaterial({ color: 0x354735, roughness: 0.72, metalness: 0.2 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x171b18, roughness: 0.62, metalness: 0.45 });
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.12, 1.35, 12), tubeMat);
+  tube.rotation.x = Math.PI / 2;
+  tube.position.z = -0.2;
+  const rear = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.1, 0.3, 12), darkMat);
+  rear.rotation.x = Math.PI / 2;
+  rear.position.z = 0.55;
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.14, 0.24), darkMat);
+  sight.position.set(0.1, 0.14, -0.28);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.34, 0.18), darkMat);
+  grip.position.set(0, -0.2, -0.15);
+  rpg.add(tube, rear, sight, grip);
+  rpg.position.set(0.42, -0.3, -0.72);
+  rpg.rotation.set(-0.03, -0.08, 0.02);
+  rpg.visible = false;
+  rpg.userData.ignoreBulletRay = true;
+  camera.add(rpg);
+  state.policeRpg = rpg;
+}
+
 function createNpcPedestrians() {
   let index = 0;
   for (const x of GRID) {
@@ -1134,6 +1162,7 @@ function animate() {
   updateDamagePieces(dt);
   updateWeaponEffects(dt);
   updateGrenades(dt);
+  updateRockets(dt);
   updateExhaustSmoke(dt);
   updatePlayer(dt);
   updatePedestrian(dt);
@@ -1777,11 +1806,12 @@ function transferPlayerControl(target, message) {
 function togglePolicePistol() {
   if (!state.policeMode || !state.onFoot || state.securityRoom || state.carTransition) return;
   state.policePistolDrawn = !state.policePistolDrawn;
-  state.policePistol.visible = state.policePistolDrawn;
+  state.policePistol.visible = state.policePistolDrawn && state.policeWeapon === "pistol";
+  state.policeRpg.visible = state.policePistolDrawn && state.policeWeapon === "rpg";
   if (state.policePistolDrawn) {
     state.policeAim.yaw = state.pedestrian.rotation.y;
     state.policeAim.pitch = 0;
-    statusEl.textContent = "Pistol drawn — click to fire · hold for automatic · Shift to aim · P to holster";
+    statusEl.textContent = `${state.policeWeapon === "rpg" ? "RPG" : "Pistol"} drawn — E changes weapon · click to fire · P to holster`;
     renderer.domElement.requestPointerLock?.().catch?.(() => {});
   } else {
     document.exitPointerLock?.();
@@ -1794,7 +1824,49 @@ function holsterPolicePistol() {
   state.policeAimZoom = 0;
   state.policeTriggerHeld = false;
   if (state.policePistol) state.policePistol.visible = false;
+  if (state.policeRpg) state.policeRpg.visible = false;
   if (document.pointerLockElement === renderer.domElement) document.exitPointerLock?.();
+}
+
+function switchPoliceWeapon() {
+  if (!state.policePistolDrawn) return;
+  state.policeWeapon = state.policeWeapon === "pistol" ? "rpg" : "pistol";
+  state.policeTriggerHeld = false;
+  state.policePistol.visible = state.policeWeapon === "pistol";
+  state.policeRpg.visible = state.policeWeapon === "rpg";
+  statusEl.textContent = `${state.policeWeapon === "rpg" ? "RPG" : "Pistol"} selected — E changes weapon`;
+}
+
+function firePoliceRpg() {
+  if (!state.policePistolDrawn || state.policeWeapon !== "rpg" || state.time - state.lastRpgShot < 0.9) return;
+  state.lastRpgShot = state.time;
+  const direction = camera.getWorldDirection(new THREE.Vector3()).normalize();
+  const rocket = new THREE.Group();
+  const body = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.09, 0.09, 0.72, 10),
+    new THREE.MeshStandardMaterial({ color: 0x59664a, roughness: 0.65, metalness: 0.25 }),
+  );
+  body.rotation.x = Math.PI / 2;
+  const nose = new THREE.Mesh(
+    new THREE.ConeGeometry(0.09, 0.24, 10),
+    new THREE.MeshStandardMaterial({ color: 0x272c26, roughness: 0.55, metalness: 0.35 }),
+  );
+  nose.rotation.x = -Math.PI / 2;
+  nose.position.z = -0.48;
+  const flame = new THREE.Mesh(
+    new THREE.ConeGeometry(0.11, 0.4, 8),
+    new THREE.MeshBasicMaterial({ color: 0xffa12b, transparent: true, opacity: 0.9 }),
+  );
+  flame.rotation.x = Math.PI / 2;
+  flame.position.z = 0.55;
+  rocket.add(body, nose, flame);
+  rocket.position.copy(camera.position).addScaledVector(direction, 1.3);
+  rocket.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), direction);
+  rocket.userData.ignoreBulletRay = true;
+  city.add(rocket);
+  rockets.push({ mesh: rocket, direction, speed: 48, bornAt: state.time });
+  playPoliceShotSound();
+  statusEl.textContent = "RPG fired";
 }
 
 function firePolicePistol(automatic = false) {
@@ -2107,7 +2179,7 @@ function createVehicleExplosion(origin) {
 }
 
 function updateWeaponEffects(dt) {
-  if (state.policeTriggerHeld && state.time - state.policeTriggerStartedAt >= 0.2) {
+  if (state.policeTriggerHeld && state.policeWeapon === "pistol" && state.time - state.policeTriggerStartedAt >= 0.2) {
     firePolicePistol(true);
   }
   if (state.policePistol?.userData.muzzle) {
@@ -2306,6 +2378,30 @@ function updateGrenades(dt) {
     const blink = Math.floor((grenade.explodeAt - state.time) * 8) % 2 === 0;
     grenade.fuse.visible = blink;
   }
+}
+
+function updateRockets(dt) {
+  for (let i = rockets.length - 1; i >= 0; i--) {
+    const rocket = rockets[i];
+    const travel = rocket.speed * dt;
+    policeRaycaster.set(rocket.mesh.position, rocket.direction);
+    policeRaycaster.far = travel + 0.35;
+    const hit = policeRaycaster.intersectObjects(city.children, true).find((entry) =>
+      !entry.object.userData.ignoreBulletRay && !entry.object.parent?.userData.ignoreBulletRay,
+    );
+    if (!hit && state.time - rocket.bornAt < 4) {
+      rocket.mesh.position.addScaledVector(rocket.direction, travel);
+      continue;
+    }
+    const origin = hit ? hit.point.clone() : rocket.mesh.position.clone();
+    city.remove(rocket.mesh);
+    rockets.splice(i, 1);
+    createVehicleExplosion(origin);
+    playExplosionSound();
+    damageCarsNearExplosion(origin, null);
+    damagePedestriansNearExplosion(origin);
+  }
+  policeRaycaster.far = Infinity;
 }
 
 function togglePoliceMode() {
@@ -4847,7 +4943,9 @@ function updateHud() {
       const chargePercent = Math.round(THREE.MathUtils.clamp((state.time - state.grenadeChargeStartedAt) / 2, 0, 1) * 100);
       statusEl.textContent = `Charging grenade throw ${chargePercent}% — release Q`;
     } else if (state.policePistolDrawn) {
-      statusEl.textContent = "Pistol drawn — Shift to aim · click or hold for automatic fire · P to holster";
+      statusEl.textContent = state.policeWeapon === "rpg"
+        ? "RPG drawn — E selects pistol · click to fire · P to holster"
+        : "Pistol drawn — E selects RPG · Shift to aim · click or hold for automatic fire · P to holster";
     } else {
       const distance = state.pedestrian.position.distanceTo(state.player.position);
       statusEl.textContent = state.player.userData.crashed || state.player.userData.immobilized
@@ -4945,7 +5043,10 @@ function onKeyDown(event) {
       statusEl.textContent = "Charging grenade throw — release Q to throw";
     } else if (!state.onFoot) toggleSignal("left");
   }
-  if (key === "e") toggleSignal("right");
+  if (key === "e") {
+    if (state.policePistolDrawn) switchPoliceWeapon();
+    else toggleSignal("right");
+  }
   if (key === "z") toggleHazards();
   if (key === "c") toggleCarExit();
   if (key === "d" && !state.introActive && !state.onFoot && !state.securityRoom && !state.policeInterview) {
@@ -4984,7 +5085,10 @@ function onKeyPress(event) {
     if (state.onFoot) return;
     toggleSignal("left");
   }
-  if (key === "e") toggleSignal("right");
+  if (key === "e") {
+    if (state.policePistolDrawn) switchPoliceWeapon();
+    else toggleSignal("right");
+  }
   if (key === "z") toggleHazards();
   if (key === "c") toggleCarExit();
   state.toggleHeld.add(key);
@@ -5017,9 +5121,13 @@ function onPointerDown(event) {
     return;
   }
   if (state.policePistolDrawn) {
-    state.policeTriggerHeld = true;
-    state.policeTriggerStartedAt = state.time;
-    firePolicePistol(false);
+    if (state.policeWeapon === "rpg") {
+      firePoliceRpg();
+    } else {
+      state.policeTriggerHeld = true;
+      state.policeTriggerStartedAt = state.time;
+      firePolicePistol(false);
+    }
     event.preventDefault();
     return;
   }
