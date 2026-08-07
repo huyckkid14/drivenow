@@ -2124,21 +2124,48 @@ function updateBlastPedestrians(dt) {
       person.position.addScaledVector(velocity, dt);
       velocity.multiplyScalar(Math.max(0, 1 - dt * 1.85));
       const airborne = Math.sin(progress * Math.PI);
-      person.position.y = flight.baseY + airborne * (1.4 + flight.exposure * 3.1);
-      person.rotation.x = progress * flight.spinX * flight.side;
-      person.rotation.y = flight.baseYaw + progress * flight.spinY * flight.side;
-      person.rotation.z = progress * flight.spinZ * -flight.side;
+      const landingBlend = THREE.MathUtils.smoothstep(progress, 0.72, 1);
+      const tumbleProgress = Math.min(progress / 0.82, 1);
+      person.position.y = flight.baseY + airborne * (1.4 + flight.exposure * 3.1) + landingBlend * 0.76;
+      person.rotation.x = THREE.MathUtils.lerp(tumbleProgress * flight.spinX * flight.side, 0.08 * flight.side, landingBlend);
+      person.rotation.y = THREE.MathUtils.lerp(
+        flight.baseYaw + tumbleProgress * flight.spinY * flight.side,
+        flight.baseYaw,
+        landingBlend,
+      );
+      person.rotation.z = THREE.MathUtils.lerp(
+        tumbleProgress * flight.spinZ * -flight.side,
+        flight.side * Math.PI / 2,
+        landingBlend,
+      );
       if (person.userData.leftArm) person.userData.leftArm.rotation.x = airborne * 1.25;
       if (person.userData.rightArm) person.userData.rightArm.rotation.x = -airborne * 1.1;
       if (person.userData.leftLeg) person.userData.leftLeg.rotation.x = -airborne * 0.62;
       if (person.userData.rightLeg) person.userData.rightLeg.rotation.x = airborne * 0.72;
       continue;
     }
+    const downDuration = 1;
+    const getUpDuration = 0.68;
+    const groundedAge = age - flight.duration;
+    velocity.set(0, 0, 0);
+    if (groundedAge < downDuration) {
+      person.position.y = flight.baseY + 0.76;
+      person.rotation.x = 0.08 * flight.side;
+      person.rotation.y = flight.baseYaw;
+      person.rotation.z = flight.side * Math.PI / 2;
+      continue;
+    }
+    const getUpProgress = THREE.MathUtils.clamp((groundedAge - downDuration) / getUpDuration, 0, 1);
+    const standBlend = getUpProgress * getUpProgress * (3 - 2 * getUpProgress);
+    person.position.y = THREE.MathUtils.lerp(flight.baseY + 0.76, flight.baseY, standBlend);
+    person.rotation.x = THREE.MathUtils.lerp(0.08 * flight.side, 0, standBlend);
+    person.rotation.y = flight.baseYaw;
+    person.rotation.z = THREE.MathUtils.lerp(flight.side * Math.PI / 2, 0, standBlend);
+    if (getUpProgress < 1) continue;
     person.rotation.x = 0;
     person.rotation.y = flight.baseYaw;
     person.rotation.z = 0;
     person.position.y = flight.baseY;
-    velocity.set(0, 0, 0);
     if (person.userData.leftArm) person.userData.leftArm.rotation.x = 0;
     if (person.userData.rightArm) person.userData.rightArm.rotation.x = 0;
     if (person.userData.leftLeg) person.userData.leftLeg.rotation.x = 0;
@@ -4802,6 +4829,7 @@ function setBrakeLights(lamps, active) {
 
 function updateCamera(dt) {
   const car = state.player;
+  camera.up.set(0, 1, 0);
   const targetFov = state.policePistolDrawn && keys.has("shift") ? 32 : 60;
   const nextFov = moveToward(camera.fov, targetFov, dt * 82);
   if (Math.abs(nextFov - camera.fov) > 0.001) {
@@ -4818,13 +4846,15 @@ function updateCamera(dt) {
   }
   if (state.onFoot && state.pedestrian) {
     const person = state.pedestrian;
+    const personQuaternion = person.getWorldQuaternion(new THREE.Quaternion());
     if (state.policePistolDrawn || state.grenadeAimActive) {
-      const eye = person.position.clone().add(new THREE.Vector3(0, 1.86, 0));
+      camera.up.set(0, 1, 0).applyQuaternion(personQuaternion).normalize();
+      const eye = person.localToWorld(new THREE.Vector3(0, 1.86, 0));
       const direction = new THREE.Vector3(
-        Math.sin(state.policeAim.yaw) * Math.cos(state.policeAim.pitch),
+        0,
         Math.sin(state.policeAim.pitch),
-        Math.cos(state.policeAim.yaw) * Math.cos(state.policeAim.pitch),
-      );
+        Math.cos(state.policeAim.pitch),
+      ).applyQuaternion(personQuaternion).normalize();
       camera.position.copy(eye).addScaledVector(direction, 0.16);
       camera.lookAt(eye.clone().addScaledVector(direction, 40));
       return;
@@ -4835,7 +4865,7 @@ function updateCamera(dt) {
       camera.position.copy(target);
       state.grenadeCameraSnapBack = false;
     } else {
-      camera.position.lerp(target, 1 - Math.pow(0.001, dt));
+      camera.position.copy(target);
     }
     camera.lookAt(person.position.clone().addScaledVector(walkForward, 8).add(new THREE.Vector3(0, 2.2, 0)));
     return;
@@ -4861,24 +4891,24 @@ function updateCamera(dt) {
     if (cockpitImpact) lookLocal.add(cockpitImpact.look);
     const target = car.localToWorld(cameraLocal);
     const look = car.localToWorld(lookLocal);
+    camera.up.set(0, 1, 0).applyQuaternion(car.getWorldQuaternion(new THREE.Quaternion())).normalize();
     // Close cameras must stay rigidly mounted. World-space smoothing makes them
     // lag through the car body when the player accelerates.
     camera.position.copy(target);
     camera.lookAt(look);
     return;
   }
-  const baseForward = getWorldForward(car);
+  const baseForward = getWorldForward(car).setY(0);
+  if (baseForward.lengthSq() < 0.01) baseForward.set(Math.sin(car.rotation.y), 0, Math.cos(car.rotation.y));
+  baseForward.normalize();
   const forward = state.playerCrashed
     ? baseForward.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), state.crashLook.yaw).normalize()
     : baseForward;
   const carPosition = car.getWorldPosition(new THREE.Vector3());
   const vertical = state.playerCrashed ? new THREE.Vector3(0, 11 + state.crashLook.pitch, 0) : new THREE.Vector3(0, 11, 0);
-  const target = carPosition
-    .clone()
-    .addScaledVector(forward, -15)
-    .add(vertical);
-  camera.position.lerp(target, 1 - Math.pow(0.001, dt));
+  const target = carPosition.clone().addScaledVector(forward, -15).add(vertical);
   const look = carPosition.clone().addScaledVector(forward, 8).add(new THREE.Vector3(0, 2.2, 0));
+  camera.position.copy(target);
   camera.lookAt(look);
 }
 
