@@ -1768,7 +1768,7 @@ function firePolicePistol() {
   }
   createPoliceShotTracer(hitPoint);
   if (surfaceHit) createBulletHole(surfaceHit);
-  if (!target || target.userData.immobilized) return;
+  if (!target) return;
   target.userData.policeShotHits = (target.userData.policeShotHits || 0) + 1;
   statusEl.textContent = `Vehicle hit ${target.userData.policeShotHits}/5`;
   if (target.userData.policeShotHits >= 5) explodePoliceShotCar(target);
@@ -1826,6 +1826,7 @@ function createPoliceShotTracer(hitPoint) {
 
 function explodePoliceShotCar(car) {
   const data = car.userData;
+  data.policeShotHits = 0;
   data.speed = 0;
   data.velocity.set(0, 0, 0);
   data.angularVelocity = 0;
