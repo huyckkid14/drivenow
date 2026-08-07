@@ -50,6 +50,7 @@ const trafficLights = [];
 const roadSegments = [];
 const collidableCars = [];
 const damagePieces = [];
+const weaponEffects = [];
 const exhaustSmoke = [];
 const npcPedestrians = [];
 const crashResponders = [];
@@ -127,6 +128,10 @@ const state = {
   policeSiren: null,
   policeInterview: false,
   policeConversation: null,
+  policePistolDrawn: false,
+  policePistol: null,
+  policeAim: { yaw: 0, pitch: 0 },
+  lastPoliceShot: -10,
   introActive: document.documentElement.dataset.intro === "new",
   cameraView: 0,
   backupCameraActive: false,
@@ -191,6 +196,7 @@ function init() {
   createIntersectionSecurityCameras();
   createPlayer();
   createPedestrian();
+  createPolicePistol();
   createBots();
   createSkylineDetails();
 
@@ -784,6 +790,37 @@ function pedestrianLimb(width, length, material, x, y) {
   return pivot;
 }
 
+function createPolicePistol() {
+  scene.add(camera);
+  const pistol = new THREE.Group();
+  const metal = new THREE.MeshStandardMaterial({ color: 0x171a1e, roughness: 0.3, metalness: 0.78 });
+  const gripMat = new THREE.MeshStandardMaterial({ color: 0x090a0b, roughness: 0.82 });
+  const skin = new THREE.MeshStandardMaterial({ color: 0xd59a72, roughness: 0.8 });
+  const slide = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.18, 0.68), metal);
+  slide.position.set(0, 0.04, -0.24);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.5, 10), metal);
+  barrel.rotation.x = Math.PI / 2;
+  barrel.position.set(0, 0.04, -0.42);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.48, 0.24), gripMat);
+  grip.position.set(0, -0.24, 0.02);
+  grip.rotation.x = -0.2;
+  const hand = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.3, 0.38), skin);
+  hand.position.set(0, -0.25, 0.12);
+  const muzzle = new THREE.Mesh(
+    new THREE.SphereGeometry(0.1, 10, 7),
+    new THREE.MeshBasicMaterial({ color: 0xffd45c, transparent: true, opacity: 0.95 }),
+  );
+  muzzle.position.set(0, 0.04, -0.77);
+  muzzle.visible = false;
+  pistol.add(slide, barrel, grip, hand, muzzle);
+  pistol.position.set(0.36, -0.34, -0.78);
+  pistol.rotation.set(-0.04, -0.08, 0.02);
+  pistol.visible = false;
+  pistol.userData.muzzle = muzzle;
+  camera.add(pistol);
+  state.policePistol = pistol;
+}
+
 function createNpcPedestrians() {
   let index = 0;
   for (const x of GRID) {
@@ -1043,6 +1080,7 @@ function animate() {
   updateCrashPhysics(dt);
   updatePieceCarPushes();
   updateDamagePieces(dt);
+  updateWeaponEffects(dt);
   updateExhaustSmoke(dt);
   updatePlayer(dt);
   updatePedestrian(dt);
@@ -1247,10 +1285,13 @@ function updatePedestrian(dt) {
   if (!person || !state.onFoot || state.securityRoom || state.carTransition) return;
   const data = person.userData;
   const moveInput = (keys.has("arrowup") ? 1 : 0) - (keys.has("arrowdown") ? 1 : 0);
-  const steerInput = (keys.has("arrowleft") ? 1 : 0) - (keys.has("arrowright") ? 1 : 0);
+  const steerInput = state.policePistolDrawn
+    ? 0
+    : (keys.has("arrowleft") ? 1 : 0) - (keys.has("arrowright") ? 1 : 0);
   const targetSpeed = moveInput > 0 ? 4.8 : moveInput < 0 ? -2.8 : 0;
   data.speed = moveToward(data.speed, targetSpeed, dt * (moveInput ? 10 : 14));
   data.steer = moveToward(data.steer, steerInput, dt * 7);
+  if (state.policePistolDrawn) person.rotation.y = state.policeAim.yaw;
   const walkingSpeed = Math.abs(data.speed);
   if (walkingSpeed > 0.05) {
     const previous = person.position.clone();
@@ -1358,6 +1399,7 @@ function finishCarStep(transition) {
   }
 
   state.onFoot = false;
+  holsterPolicePistol();
   person.userData.velocity.set(0, 0, 0);
   person.userData.speed = 0;
   person.userData.steer = 0;
@@ -1675,6 +1717,130 @@ function transferPlayerControl(target, message) {
   statusEl.textContent = message;
 }
 
+function togglePolicePistol() {
+  if (!state.policeMode || !state.onFoot || state.securityRoom || state.carTransition) return;
+  state.policePistolDrawn = !state.policePistolDrawn;
+  state.policePistol.visible = state.policePistolDrawn;
+  if (state.policePistolDrawn) {
+    state.policeAim.yaw = state.pedestrian.rotation.y;
+    state.policeAim.pitch = 0;
+    statusEl.textContent = "Pistol drawn — move mouse to aim, click to fire, P to holster";
+    renderer.domElement.requestPointerLock?.().catch?.(() => {});
+  } else {
+    document.exitPointerLock?.();
+    statusEl.textContent = "Pistol holstered — third-person view";
+  }
+}
+
+function holsterPolicePistol() {
+  state.policePistolDrawn = false;
+  if (state.policePistol) state.policePistol.visible = false;
+  if (document.pointerLockElement === renderer.domElement) document.exitPointerLock?.();
+}
+
+function firePolicePistol() {
+  if (!state.policePistolDrawn || state.time - state.lastPoliceShot < 0.18) return;
+  state.lastPoliceShot = state.time;
+  state.policePistol.userData.muzzle.visible = true;
+  playPoliceShotSound();
+
+  policeRaycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+  const hits = policeRaycaster.intersectObjects(cars, true);
+  let target = null;
+  let hitPoint = camera.position.clone().addScaledVector(camera.getWorldDirection(new THREE.Vector3()), 90);
+  for (const hit of hits) {
+    let car = hit.object;
+    while (car.parent && !cars.includes(car)) car = car.parent;
+    if (!cars.includes(car) || car.userData.player || !car.visible || car.userData.waitingForEntry) continue;
+    target = car;
+    hitPoint = hit.point.clone();
+    break;
+  }
+  createPoliceShotTracer(hitPoint);
+  if (!target || target.userData.immobilized) return;
+  target.userData.policeShotHits = (target.userData.policeShotHits || 0) + 1;
+  statusEl.textContent = `Vehicle hit ${target.userData.policeShotHits}/5`;
+  if (target.userData.policeShotHits >= 5) explodePoliceShotCar(target);
+}
+
+function createPoliceShotTracer(hitPoint) {
+  const muzzle = state.policePistol.userData.muzzle;
+  const start = muzzle.getWorldPosition(new THREE.Vector3());
+  const geometry = new THREE.BufferGeometry().setFromPoints([start, hitPoint]);
+  const line = new THREE.Line(
+    geometry,
+    new THREE.LineBasicMaterial({ color: 0xffe58a, transparent: true, opacity: 0.9 }),
+  );
+  city.add(line);
+  weaponEffects.push({ mesh: line, bornAt: state.time, duration: 0.07, kind: "tracer" });
+}
+
+function explodePoliceShotCar(car) {
+  const data = car.userData;
+  data.speed = 0;
+  data.velocity.set(0, 0, 0);
+  data.angularVelocity = 0;
+  data.crashed = false;
+  data.immobilized = true;
+  data.braking = true;
+  data.hazard = true;
+  data.policePullOver = null;
+  data.policeRelease = null;
+  if (state.policeTarget === car) state.policeTarget = null;
+  const shotDirection = camera.getWorldDirection(new THREE.Vector3());
+  spawnCollisionDamage(car, shotDirection.clone().multiplyScalar(-1), shotDirection.multiplyScalar(18), 26);
+  playCrashSound(1);
+  if (data.body?.material?.color) data.body.material.color.lerp(new THREE.Color(0x151515), 0.72);
+
+  const blast = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 18, 12),
+    new THREE.MeshBasicMaterial({ color: 0xff7a16, transparent: true, opacity: 0.9, depthWrite: false }),
+  );
+  blast.position.copy(car.position).add(new THREE.Vector3(0, 1.1, 0));
+  city.add(blast);
+  weaponEffects.push({ mesh: blast, bornAt: state.time, duration: 0.65, kind: "blast" });
+  statusEl.textContent = "Vehicle disabled";
+}
+
+function updateWeaponEffects() {
+  if (state.policePistol?.userData.muzzle) {
+    state.policePistol.userData.muzzle.visible = state.policePistolDrawn && state.time - state.lastPoliceShot < 0.045;
+    const recoil = Math.max(0, 1 - (state.time - state.lastPoliceShot) / 0.16);
+    state.policePistol.position.z = -0.78 + recoil * 0.1;
+    state.policePistol.rotation.x = -0.04 - recoil * 0.1;
+  }
+  for (let i = weaponEffects.length - 1; i >= 0; i--) {
+    const effect = weaponEffects[i];
+    const progress = (state.time - effect.bornAt) / effect.duration;
+    if (progress >= 1) {
+      city.remove(effect.mesh);
+      effect.mesh.geometry?.dispose();
+      effect.mesh.material?.dispose();
+      weaponEffects.splice(i, 1);
+      continue;
+    }
+    effect.mesh.material.opacity = 1 - progress;
+    if (effect.kind === "blast") effect.mesh.scale.setScalar(0.5 + progress * 4.5);
+  }
+}
+
+function playPoliceShotSound() {
+  const audio = ensureAudio();
+  if (!audio) return;
+  const now = audio.currentTime;
+  const oscillator = audio.createOscillator();
+  const gain = audio.createGain();
+  oscillator.type = "square";
+  oscillator.frequency.setValueAtTime(170, now);
+  oscillator.frequency.exponentialRampToValueAtTime(55, now + 0.1);
+  gain.gain.setValueAtTime(0.22, now);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.13);
+  oscillator.connect(gain);
+  gain.connect(audio.destination);
+  oscillator.start(now);
+  oscillator.stop(now + 0.14);
+}
+
 function togglePoliceMode() {
   if (state.policeInterview) return;
   if (state.onFoot || state.securityRoom || state.playerCrashed) return;
@@ -1759,6 +1925,7 @@ function togglePoliceMode() {
 }
 
 function disablePoliceMode() {
+  holsterPolicePistol();
   stopPoliceSiren();
   const car = state.player;
   if (car?.userData.policeKit) car.remove(car.userData.policeKit);
@@ -4071,6 +4238,17 @@ function updateCamera(dt) {
   }
   if (state.onFoot && state.pedestrian) {
     const person = state.pedestrian;
+    if (state.policePistolDrawn) {
+      const eye = person.position.clone().add(new THREE.Vector3(0, 1.86, 0));
+      const direction = new THREE.Vector3(
+        Math.sin(state.policeAim.yaw) * Math.cos(state.policeAim.pitch),
+        Math.sin(state.policeAim.pitch),
+        Math.cos(state.policeAim.yaw) * Math.cos(state.policeAim.pitch),
+      );
+      camera.position.copy(eye).addScaledVector(direction, 0.16);
+      camera.lookAt(eye.clone().addScaledVector(direction, 40));
+      return;
+    }
     const walkForward = new THREE.Vector3(Math.sin(person.rotation.y), 0, Math.cos(person.rotation.y));
     const target = person.position.clone().addScaledVector(walkForward, -15).add(new THREE.Vector3(0, 11, 0));
     camera.position.lerp(target, 1 - Math.pow(0.001, dt));
@@ -4149,6 +4327,7 @@ function getCockpitImpactMotion(car) {
 
 function updateHud() {
   document.body.classList.toggle("security-view", state.securityRoom);
+  document.body.classList.toggle("pistol-view", state.policePistolDrawn);
   const speed = Math.round(Math.abs(state.player.userData.speed) * 2.237);
   const dashboardVisible = state.cameraView === 2 && !state.onFoot && !state.securityRoom && !state.policeInterview;
   const playerData = state.player.userData;
@@ -4183,10 +4362,14 @@ function updateHud() {
       ? `ALL ${securityCameras.length} SECURITY FEEDS — click one to enlarge — C to exit`
       : `CAMERA ${state.securitySelected + 1} HIGHLIGHTED — Esc to view all — C to exit`;
   } else if (state.onFoot) {
-    const distance = state.pedestrian.position.distanceTo(state.player.position);
-    statusEl.textContent = state.player.userData.crashed || state.player.userData.immobilized
-      ? "Wrecked car — continue on foot or restart"
-      : distance <= 3.3 ? "Press C to get back in" : "On foot — follow the blue beacon to your car";
+    if (state.policePistolDrawn) {
+      statusEl.textContent = "Pistol drawn — mouse to aim · click to fire · P to holster";
+    } else {
+      const distance = state.pedestrian.position.distanceTo(state.player.position);
+      statusEl.textContent = state.player.userData.crashed || state.player.userData.immobilized
+        ? "Wrecked car — continue on foot or restart"
+        : distance <= 3.3 ? "Press C to get back in" : "On foot — follow the blue beacon to your car";
+    }
   } else if (state.policeMode) {
     const stop = state.policeTarget?.userData.policePullOver;
     statusEl.textContent = !stop
@@ -4269,7 +4452,10 @@ function onKeyDown(event) {
     statusEl.textContent = `${viewName} — D changes view`;
   }
   if (key === "h" && !state.onFoot && !state.securityRoom) startPlayerHorn();
-  if (key === "p") togglePoliceMode();
+  if (key === "p") {
+    if (state.onFoot && state.policeMode) togglePolicePistol();
+    else togglePoliceMode();
+  }
   if (key === "1") togglePoliceInterview();
   if (key === "o" && state.policeMode && !state.onFoot && !state.securityRoom) {
     if (state.policeSiren) {
@@ -4311,6 +4497,11 @@ function onPointerDown(event) {
     event.preventDefault();
     return;
   }
+  if (state.policePistolDrawn) {
+    firePolicePistol();
+    event.preventDefault();
+    return;
+  }
   if (state.securityRoom) {
     const rect = renderer.domElement.getBoundingClientRect();
     const column = THREE.MathUtils.clamp(Math.floor(((event.clientX - rect.left) / rect.width) * 5), 0, 4);
@@ -4332,6 +4523,13 @@ function onPointerDown(event) {
 }
 
 function onPointerMove(event) {
+  if (state.policePistolDrawn) {
+    state.policeAim.yaw -= event.movementX * 0.0025;
+    state.policeAim.pitch = THREE.MathUtils.clamp(state.policeAim.pitch - event.movementY * 0.0022, -1.15, 1.15);
+    state.pedestrian.rotation.y = state.policeAim.yaw;
+    event.preventDefault();
+    return;
+  }
   if (state.cameraView === 2 && !state.onFoot && !state.securityRoom && !state.policeInterview) {
     const rect = renderer.domElement.getBoundingClientRect();
     const x = THREE.MathUtils.clamp(((event.clientX - rect.left) / rect.width) * 2 - 1, -1, 1);
@@ -4652,6 +4850,13 @@ function stopPlayerHorn() {
 }
 
 function restartCity() {
+  holsterPolicePistol();
+  for (const effect of weaponEffects) {
+    city.remove(effect.mesh);
+    effect.mesh.geometry?.dispose();
+    effect.mesh.material?.dispose();
+  }
+  weaponEffects.length = 0;
   stopPoliceSiren();
   state.policeMode = false;
   state.policeTarget = null;

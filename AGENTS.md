@@ -51,7 +51,8 @@
 - `D`: cycle normal, hood, and 3D cockpit camera views.
 - Mouse movement: look around while using the 3D cockpit view.
 - `H`: hold the horn.
-- `P`: toggle police mode.
+- `P`: toggle police mode while driving; draw or holster the police pistol while walking in police mode.
+- Mouse movement / click: aim and fire the drawn police pistol in first-person view.
 - `O`: toggle the police siren.
 - `1`: begin or end the close-up driver interaction after the selected vehicle has completed its pull-over.
 
