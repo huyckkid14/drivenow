@@ -1081,6 +1081,7 @@ function animate() {
   state.time += dt;
   updateTrafficLights();
   updateCrashPhysics(dt);
+  updateExplosionTumbles(dt);
   updatePieceCarPushes();
   updateDamagePieces(dt);
   updateWeaponEffects(dt);
@@ -1088,6 +1089,7 @@ function animate() {
   updatePlayer(dt);
   updatePedestrian(dt);
   updateNpcPedestrians(dt);
+  updateBlastPedestrians(dt);
   updateCarDoor(dt);
   updateCrashMeeting(dt);
   updateBots(dt);
@@ -1286,6 +1288,7 @@ function updatePlayer(dt) {
 function updatePedestrian(dt) {
   const person = state.pedestrian;
   if (!person || !state.onFoot || state.securityRoom || state.carTransition) return;
+  if (person.userData.blastFlight) return;
   const data = person.userData;
   const moveInput = (keys.has("arrowup") ? 1 : 0) - (keys.has("arrowdown") ? 1 : 0);
   const steerInput = state.policePistolDrawn
@@ -1415,6 +1418,7 @@ function updateNpcPedestrians(dt) {
   const player = state.player;
   for (const person of npcPedestrians) {
     const data = person.userData;
+    if (data.blastFlight) continue;
     if (data.fallStart >= 0) {
       const progress = THREE.MathUtils.clamp((state.time - data.fallStart) / 0.72, 0, 1);
       const eased = progress * progress * (3 - 2 * progress);
@@ -1831,6 +1835,13 @@ function explodePoliceShotCar(car) {
   data.hazard = true;
   data.policePullOver = null;
   data.policeRelease = null;
+  data.explosionTumble = {
+    startedAt: state.time,
+    exposure: 1,
+    axisX: THREE.MathUtils.randFloat(0.82, 1),
+    axisZ: THREE.MathUtils.randFloatSpread(0.7),
+    direction: Math.random() < 0.5 ? -1 : 1,
+  };
   if (state.policeTarget === car) state.policeTarget = null;
   const shotDirection = camera.getWorldDirection(new THREE.Vector3());
   spawnCollisionDamage(car, shotDirection.clone().multiplyScalar(-1), shotDirection.multiplyScalar(18), 26);
@@ -1839,6 +1850,7 @@ function explodePoliceShotCar(car) {
   const explosionOrigin = car.position.clone().add(new THREE.Vector3(0, 1.05, 0));
   createVehicleExplosion(explosionOrigin);
   damageCarsNearExplosion(explosionOrigin, car);
+  damagePedestriansNearExplosion(explosionOrigin);
   statusEl.textContent = "Vehicle disabled";
 }
 
@@ -1864,6 +1876,13 @@ function damageCarsNearExplosion(origin, sourceCar) {
     data.policeRelease = null;
     if (state.policeTarget === nearby) state.policeTarget = null;
     data.policeShotHits = (data.policeShotHits || 0) + Math.max(1, Math.round(exposure * 3));
+    data.explosionTumble = {
+      startedAt: state.time,
+      exposure,
+      axisX: THREE.MathUtils.randFloat(0.72, 1),
+      axisZ: THREE.MathUtils.randFloatSpread(0.8),
+      direction: Math.random() < 0.5 ? -1 : 1,
+    };
     if (data.player) {
       data.driveDamage = THREE.MathUtils.clamp((data.driveDamage || 0) + exposure * 0.72, 0, 1);
       data.damagePull = Math.sign(outward.x || 1);
@@ -1881,6 +1900,108 @@ function damageCarsNearExplosion(origin, sourceCar) {
     } else {
       startCrashSlide(nearby, blastVelocity, THREE.MathUtils.randFloatSpread(1.8) * exposure);
     }
+  }
+}
+
+function updateExplosionTumbles() {
+  for (const car of collidableCars) {
+    const tumble = car.userData.explosionTumble;
+    if (!tumble) continue;
+    const age = state.time - tumble.startedAt;
+    const flipDuration = 0.72;
+    const totalDuration = 3.15;
+    if (age >= totalDuration) {
+      car.rotation.x = 0;
+      car.rotation.z = 0;
+      car.position.y = 0;
+      car.userData.explosionTumble = null;
+      continue;
+    }
+    if (age < flipDuration) {
+      const progress = age / flipDuration;
+      const eased = progress * progress * (3 - 2 * progress);
+      const turns = tumble.exposure > 0.52 ? Math.PI * 2 : Math.PI * (0.7 + tumble.exposure * 0.55);
+      const angle = eased * turns * tumble.direction;
+      car.rotation.x = angle * tumble.axisX;
+      car.rotation.z = angle * tumble.axisZ;
+      car.position.y = Math.sin(progress * Math.PI) * (0.65 + tumble.exposure * 2.15);
+      continue;
+    }
+    const settleProgress = (age - flipDuration) / (totalDuration - flipDuration);
+    const decay = Math.pow(1 - settleProgress, 2.2);
+    const wobble = Math.sin((age - flipDuration) * 12.5) * decay * (0.22 + tumble.exposure * 0.5);
+    car.rotation.x = wobble * tumble.axisX;
+    car.rotation.z = wobble * tumble.axisZ;
+    car.position.y = Math.abs(wobble) * 0.32;
+  }
+}
+
+function damagePedestriansNearExplosion(origin) {
+  const people = [];
+  if (state.onFoot && state.pedestrian?.visible) people.push(state.pedestrian);
+  for (const person of npcPedestrians) if (person.visible) people.push(person);
+  for (const responder of crashResponders) if (responder.person?.visible) people.push(responder.person);
+  for (const driver of hijackedDrivers) if (driver.visible) people.push(driver);
+
+  for (const person of new Set(people)) {
+    const offset = person.position.clone().sub(origin);
+    offset.y = 0;
+    const distance = offset.length();
+    if (distance >= 15) continue;
+    const exposure = 1 - distance / 15;
+    const direction = distance > 0.05 ? offset.normalize() : new THREE.Vector3(1, 0, 0);
+    person.userData.speed = 0;
+    person.userData.velocity = direction.multiplyScalar(3.5 + exposure * 8.5);
+    person.userData.blastFlight = {
+      startedAt: state.time,
+      exposure,
+      side: Math.random() < 0.5 ? -1 : 1,
+      baseY: person.position.y,
+      baseYaw: person.rotation.y,
+      duration: 0.8 + exposure * 0.5,
+      spinX: THREE.MathUtils.randFloat(2.2, 3.6) * Math.PI * 2,
+      spinY: THREE.MathUtils.randFloat(0.8, 1.8) * Math.PI * 2,
+      spinZ: THREE.MathUtils.randFloat(1.7, 3.1) * Math.PI * 2,
+    };
+  }
+}
+
+function updateBlastPedestrians(dt) {
+  const people = [];
+  if (state.pedestrian) people.push(state.pedestrian);
+  people.push(...npcPedestrians, ...hijackedDrivers);
+  for (const responder of crashResponders) if (responder.person) people.push(responder.person);
+
+  for (const person of new Set(people)) {
+    const flight = person.userData.blastFlight;
+    if (!flight) continue;
+    const age = state.time - flight.startedAt;
+    const velocity = person.userData.velocity;
+    const progress = THREE.MathUtils.clamp(age / flight.duration, 0, 1);
+    if (progress < 1) {
+      person.position.addScaledVector(velocity, dt);
+      velocity.multiplyScalar(Math.max(0, 1 - dt * 1.85));
+      const airborne = Math.sin(progress * Math.PI);
+      person.position.y = flight.baseY + airborne * (1.4 + flight.exposure * 3.1);
+      person.rotation.x = progress * flight.spinX * flight.side;
+      person.rotation.y = flight.baseYaw + progress * flight.spinY * flight.side;
+      person.rotation.z = progress * flight.spinZ * -flight.side;
+      if (person.userData.leftArm) person.userData.leftArm.rotation.x = airborne * 1.25;
+      if (person.userData.rightArm) person.userData.rightArm.rotation.x = -airborne * 1.1;
+      if (person.userData.leftLeg) person.userData.leftLeg.rotation.x = -airborne * 0.62;
+      if (person.userData.rightLeg) person.userData.rightLeg.rotation.x = airborne * 0.72;
+      continue;
+    }
+    person.rotation.x = 0;
+    person.rotation.y = flight.baseYaw;
+    person.rotation.z = 0;
+    person.position.y = flight.baseY;
+    velocity.set(0, 0, 0);
+    if (person.userData.leftArm) person.userData.leftArm.rotation.x = 0;
+    if (person.userData.rightArm) person.userData.rightArm.rotation.x = 0;
+    if (person.userData.leftLeg) person.userData.leftLeg.rotation.x = 0;
+    if (person.userData.rightLeg) person.userData.rightLeg.rotation.x = 0;
+    person.userData.blastFlight = null;
   }
 }
 
@@ -3795,7 +3916,7 @@ function updateCrashMeeting(dt) {
       door.rotation.y = moveToward(door.rotation.y, doorTarget, dt * (doorTarget ? 3 : 2.1));
     }
     if (!responder.person && readyToExit && (!door || door.rotation.y < -0.82)) spawnCrashResponder(responder);
-    if (!responder.person) continue;
+    if (!responder.person || responder.person.userData.blastFlight) continue;
     const squeezing = cars.some((nearbyCar) => nearbyCar.position.distanceToSquared(responder.person.position) < 10.5);
     responder.person.scale.x = moveToward(responder.person.scale.x, squeezing ? 0.72 : 1, dt * 3.5);
 
