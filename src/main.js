@@ -148,8 +148,13 @@ const state = {
   grenadeChargeMeter: null,
   grenadeCameraSnapBack: false,
   introActive: document.documentElement.dataset.intro === "new",
-  cameraView: 0,
+  cameraView: 2,
   backupCameraActive: false,
+  gear: "drive",
+  gearDragging: false,
+  gearDragStartY: 0,
+  gearDragStartZ: 0.16,
+  gearDragZ: 0.16,
   cockpitLook: { yaw: 0, pitch: 0, lastMovedAt: -Infinity },
   botSensitivity: 0,
   trafficDensity: 1,
@@ -706,6 +711,51 @@ function createCockpitInterior(car) {
   cluster.position.set(0.38, 1.32, 0.345);
   cluster.rotation.y = Math.PI;
 
+  const shifter = new THREE.Group();
+  const shifterBase = new THREE.Mesh(
+    new THREE.BoxGeometry(0.4, 0.09, 0.72),
+    new THREE.MeshStandardMaterial({ color: 0x111619, roughness: 0.68 }),
+  );
+  const shifterSlot = new THREE.Mesh(
+    new THREE.BoxGeometry(0.1, 0.02, 0.46),
+    new THREE.MeshBasicMaterial({ color: 0x050708 }),
+  );
+  shifterSlot.position.y = 0.058;
+  const shifterLever = new THREE.Group();
+  const shifterBoot = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.055, 0.14, 0.15, 12),
+    new THREE.MeshStandardMaterial({ color: 0x090b0c, roughness: 0.95 }),
+  );
+  shifterBoot.position.y = 0.12;
+  const shifterHandle = new THREE.Mesh(
+    new THREE.SphereGeometry(0.13, 16, 12),
+    new THREE.MeshStandardMaterial({ color: 0x20282c, roughness: 0.34, metalness: 0.28 }),
+  );
+  shifterHandle.scale.set(0.9, 0.72, 1.18);
+  shifterHandle.position.y = 0.43;
+  const shifterStem = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.027, 0.032, 0.36, 12),
+    new THREE.MeshStandardMaterial({ color: 0xa8b3b8, roughness: 0.24, metalness: 0.82 }),
+  );
+  shifterStem.position.y = 0.27;
+  shifterLever.position.z = 0.16;
+  shifterLever.add(shifterBoot, shifterStem, shifterHandle);
+  for (const [z, color] of [[0.27, 0x45df83], [-0.27, 0xffa23b]]) {
+    const marker = new THREE.Mesh(
+      new THREE.BoxGeometry(0.07, 0.025, 0.09),
+      new THREE.MeshBasicMaterial({ color }),
+    );
+    marker.position.set(0.145, 0.065, z);
+    marker.userData.gearSelector = true;
+    shifter.add(marker);
+  }
+  shifter.position.set(-0.42, 0.82, -0.02);
+  shifter.add(shifterBase, shifterSlot, shifterLever);
+  shifterBase.userData.gearSelector = true;
+  shifterHandle.userData.gearSelector = true;
+  shifterStem.userData.gearSelector = true;
+  shifterBoot.userData.gearSelector = true;
+
   const backupGuides = new THREE.Group();
   backupGuides.visible = false;
   for (const [color, z, width] of [[0x43e47a, -10.2, 2.35], [0xffd247, -7.2, 2.7], [0xff4b42, -4.25, 3.05]]) {
@@ -759,13 +809,14 @@ function createCockpitInterior(car) {
   const rearviewStem = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.12, 0.06), trim);
   rearviewStem.position.set(0, 2.11, 0.5);
 
-  cockpit.add(dashboard, roof, windshield, wheel, wheelHub, display, cluster, infotainment,
+  cockpit.add(dashboard, roof, windshield, wheel, wheelHub, display, cluster, infotainment, shifter,
     rearviewHousing, rearviewMirror, rearviewStem);
   cockpit.userData.displayCanvas = displayCanvas;
   cockpit.userData.displayTexture = displayTexture;
   cockpit.userData.displayMaterial = displayMaterial;
   cockpit.userData.clusterCanvas = clusterCanvas;
   cockpit.userData.clusterTexture = clusterTexture;
+  cockpit.userData.shifterLever = shifterLever;
   cockpit.userData.backupGuides = backupGuides;
   car.add(cockpit);
   car.userData.cockpit = cockpit;
@@ -1307,6 +1358,7 @@ function updatePlayer(dt) {
   }
   const throttle = keys.has("arrowup") ? 1 : 0;
   const brakeKey = keys.has("arrowdown") ? 1 : 0;
+  const gearDirection = state.gear === "reverse" ? -1 : 1;
   if (data.player && data.immobilized && state.playerCrashed && (throttle || brakeKey) && !state.onFoot) {
     data.immobilized = false;
     data.limpMode = true;
@@ -1339,12 +1391,14 @@ function updatePlayer(dt) {
 
   const damagedPowerPulse = damage ? 0.48 + (Math.sin(state.time * 7.2) * 0.5 + 0.5) * 0.3 : 1;
   const accel = stationaryRev ? 0 : throttle * 18 * (1 - damage * 0.62) * damagedPowerPulse;
-  const brake = stationaryRev ? 0 : brakeKey * (data.speed > 0.2 ? 34 : 18) * (1 - damage * 0.38);
+  const brake = stationaryRev ? 0 : brakeKey * 34 * (1 - damage * 0.38);
   const drag = 4.2 + Math.abs(data.speed) * 0.1 + damage * 1.8;
-  data.braking = Boolean(brakeKey || (!throttle && data.speed > 4));
+  const changingDirection = throttle && data.speed * gearDirection < -0.2;
+  data.braking = Boolean(brakeKey || changingDirection || (!throttle && Math.abs(data.speed) > 4));
   if (!stationaryRev) {
-    data.speed += accel * dt;
-    data.speed -= brake * dt;
+    if (changingDirection) data.speed = moveToward(data.speed, 0, 34 * dt);
+    else data.speed += gearDirection * accel * dt;
+    if (brakeKey) data.speed = moveToward(data.speed, 0, brake * dt);
   }
   if (!throttle && !brakeKey) data.speed -= Math.sign(data.speed) * drag * dt;
   if (Math.abs(data.speed) < 0.1) data.speed = 0;
@@ -1498,6 +1552,9 @@ function finishCarStep(transition) {
   }
 
   state.onFoot = false;
+  state.cameraView = 2;
+  state.gear = "drive";
+  state.backupCameraActive = false;
   holsterPolicePistol();
   person.userData.velocity.set(0, 0, 0);
   person.userData.speed = 0;
@@ -1801,6 +1858,9 @@ function transferPlayerControl(target, message) {
 
   state.player = target;
   state.onFoot = false;
+  state.cameraView = 2;
+  state.gear = "drive";
+  state.backupCameraActive = false;
   state.playerCrashed = false;
   state.crashed = false;
   state.signal = "off";
@@ -4967,8 +5027,7 @@ function updateHud() {
   if (playerData.policeKit) playerData.policeKit.visible = !dashboardVisible;
   if (dashboardVisible) {
     const data = state.player.userData;
-    if ((data.speed || 0) < -0.25) state.backupCameraActive = true;
-    if ((data.speed || 0) > 0.25) state.backupCameraActive = false;
+    state.backupCameraActive = state.gear === "reverse";
     const cockpit = data.cockpit;
     cockpit.userData.displayMaterial.map = state.backupCameraActive ? backupCameraTarget.texture : cockpit.userData.displayTexture;
     cockpit.userData.displayMaterial.needsUpdate = true;
@@ -5144,6 +5203,10 @@ function updateCockpitDisplay(speed, rpm, leftActive = false, rightActive = fals
   clusterContext.fillStyle = "#65d6ff";
   clusterContext.font = "bold 24px system-ui";
   clusterContext.fillText(`${rpm} RPM`, 192, 160);
+  clusterContext.fillStyle = state.gear === "reverse" ? "#ffb64d" : "#66e59a";
+  clusterContext.font = "bold 28px system-ui";
+  clusterContext.textAlign = "right";
+  clusterContext.fillText(state.gear === "reverse" ? "R" : "D", 356, 170);
   if (state.policeMode) {
     clusterContext.fillStyle = "#e32636";
     clusterContext.fillRect(0, 0, clusterCanvas.width / 2, 8);
@@ -5152,6 +5215,9 @@ function updateCockpitDisplay(speed, rpm, leftActive = false, rightActive = fals
   }
   clusterContext.textAlign = "start";
   cockpit.userData.clusterTexture.needsUpdate = true;
+  const gearZ = state.gearDragging ? state.gearDragZ : state.gear === "reverse" ? -0.16 : 0.16;
+  cockpit.userData.shifterLever.position.z = gearZ;
+  cockpit.userData.shifterLever.rotation.x = gearZ * 0.7;
 }
 
 function onKeyDown(event) {
@@ -5288,6 +5354,7 @@ function onPointerDown(event) {
     event.preventDefault();
     return;
   }
+  if (beginGearDrag(event)) return;
   if (state.policeMode && !state.onFoot && selectPoliceTarget(event)) {
     event.preventDefault();
     return;
@@ -5301,6 +5368,14 @@ function onPointerDown(event) {
 }
 
 function onPointerMove(event) {
+  if (state.gearDragging) {
+    const dragDistance = event.clientY - state.gearDragStartY;
+    state.gearDragZ = THREE.MathUtils.clamp(state.gearDragStartZ - dragDistance * 0.006, -0.16, 0.16);
+    if (state.gearDragZ < -0.045) setPlayerGear("reverse");
+    else if (state.gearDragZ > 0.045) setPlayerGear("drive");
+    event.preventDefault();
+    return;
+  }
   if (state.policePistolDrawn || state.grenadeAimActive) {
     state.policeAim.yaw -= event.movementX * 0.0025;
     state.policeAim.pitch = THREE.MathUtils.clamp(state.policeAim.pitch - event.movementY * 0.0022, -1.15, 1.15);
@@ -5330,6 +5405,36 @@ function onPointerMove(event) {
 function onPointerUp() {
   state.policeTriggerHeld = false;
   state.crashLook.active = false;
+  state.gearDragging = false;
+}
+
+function beginGearDrag(event) {
+  if (state.cameraView !== 2 || state.onFoot || state.securityRoom || state.policeInterview || state.carTransition) return false;
+  const cockpit = state.player.userData.cockpit;
+  if (!cockpit?.visible) return false;
+  const rect = renderer.domElement.getBoundingClientRect();
+  policePointer.set(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1,
+  );
+  policeRaycaster.setFromCamera(policePointer, camera);
+  const hit = policeRaycaster.intersectObject(cockpit, true).find((entry) => entry.object.userData.gearSelector);
+  if (!hit) return false;
+  state.gearDragging = true;
+  state.gearDragStartY = event.clientY;
+  state.gearDragStartZ = state.gear === "reverse" ? -0.16 : 0.16;
+  state.gearDragZ = state.gearDragStartZ;
+  renderer.domElement.setPointerCapture?.(event.pointerId);
+  statusEl.textContent = `Drag up for Drive · down for Reverse — currently ${state.gear === "reverse" ? "R" : "D"}`;
+  event.preventDefault();
+  return true;
+}
+
+function setPlayerGear(gear) {
+  if (gear === state.gear) return;
+  state.gear = gear;
+  state.backupCameraActive = gear === "reverse";
+  statusEl.textContent = gear === "reverse" ? "Reverse selected — ↑ accelerates backward" : "Drive selected — ↑ accelerates forward";
 }
 
 function normalizeKey(event) {
@@ -5675,8 +5780,11 @@ function restartCity() {
   state.securityRoom = false;
   state.securitySelected = null;
   state.securityFeedCursor = 0;
-  state.cameraView = 0;
+  state.cameraView = 2;
   state.backupCameraActive = false;
+  state.gear = "drive";
+  state.gearDragging = false;
+  state.gearDragZ = 0.16;
   state.cockpitLook.yaw = 0;
   state.cockpitLook.pitch = 0;
   state.cockpitLook.lastMovedAt = -Infinity;
