@@ -2124,20 +2124,11 @@ function updateBlastPedestrians(dt) {
       person.position.addScaledVector(velocity, dt);
       velocity.multiplyScalar(Math.max(0, 1 - dt * 1.85));
       const airborne = Math.sin(progress * Math.PI);
-      const landingBlend = THREE.MathUtils.smoothstep(progress, 0.72, 1);
-      const tumbleProgress = Math.min(progress / 0.82, 1);
-      person.position.y = flight.baseY + airborne * (1.4 + flight.exposure * 3.1) + landingBlend * 0.76;
-      person.rotation.x = THREE.MathUtils.lerp(tumbleProgress * flight.spinX * flight.side, 0.08 * flight.side, landingBlend);
-      person.rotation.y = THREE.MathUtils.lerp(
-        flight.baseYaw + tumbleProgress * flight.spinY * flight.side,
-        flight.baseYaw,
-        landingBlend,
-      );
-      person.rotation.z = THREE.MathUtils.lerp(
-        tumbleProgress * flight.spinZ * -flight.side,
-        flight.side * Math.PI / 2,
-        landingBlend,
-      );
+      const groundBlend = THREE.MathUtils.smoothstep(progress, 0.82, 1);
+      person.position.y = flight.baseY + airborne * (1.4 + flight.exposure * 3.1) + groundBlend * 0.76;
+      person.rotation.x = progress * flight.spinX * flight.side;
+      person.rotation.y = flight.baseYaw + progress * flight.spinY * flight.side;
+      person.rotation.z = progress * flight.spinZ * -flight.side;
       if (person.userData.leftArm) person.userData.leftArm.rotation.x = airborne * 1.25;
       if (person.userData.rightArm) person.userData.rightArm.rotation.x = -airborne * 1.1;
       if (person.userData.leftLeg) person.userData.leftLeg.rotation.x = -airborne * 0.62;
@@ -2148,19 +2139,26 @@ function updateBlastPedestrians(dt) {
     const getUpDuration = 0.68;
     const groundedAge = age - flight.duration;
     velocity.set(0, 0, 0);
+    if (flight.landedX === undefined) {
+      const wrapAngle = (angle) => THREE.MathUtils.euclideanModulo(angle + Math.PI, Math.PI * 2) - Math.PI;
+      flight.landedX = wrapAngle(person.rotation.x);
+      flight.landedYaw = flight.baseYaw + wrapAngle(person.rotation.y - flight.baseYaw);
+      flight.landedZ = wrapAngle(person.rotation.z);
+      flight.landedY = flight.baseY + 0.76;
+    }
     if (groundedAge < downDuration) {
-      person.position.y = flight.baseY + 0.76;
-      person.rotation.x = 0.08 * flight.side;
-      person.rotation.y = flight.baseYaw;
-      person.rotation.z = flight.side * Math.PI / 2;
+      person.position.y = flight.landedY;
+      person.rotation.x = flight.landedX;
+      person.rotation.y = flight.landedYaw;
+      person.rotation.z = flight.landedZ;
       continue;
     }
     const getUpProgress = THREE.MathUtils.clamp((groundedAge - downDuration) / getUpDuration, 0, 1);
     const standBlend = getUpProgress * getUpProgress * (3 - 2 * getUpProgress);
-    person.position.y = THREE.MathUtils.lerp(flight.baseY + 0.76, flight.baseY, standBlend);
-    person.rotation.x = THREE.MathUtils.lerp(0.08 * flight.side, 0, standBlend);
-    person.rotation.y = flight.baseYaw;
-    person.rotation.z = THREE.MathUtils.lerp(flight.side * Math.PI / 2, 0, standBlend);
+    person.position.y = THREE.MathUtils.lerp(flight.landedY, flight.baseY, standBlend);
+    person.rotation.x = THREE.MathUtils.lerp(flight.landedX, 0, standBlend);
+    person.rotation.y = THREE.MathUtils.lerp(flight.landedYaw, flight.baseYaw, standBlend);
+    person.rotation.z = THREE.MathUtils.lerp(flight.landedZ, 0, standBlend);
     if (getUpProgress < 1) continue;
     person.rotation.x = 0;
     person.rotation.y = flight.baseYaw;
