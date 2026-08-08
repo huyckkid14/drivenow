@@ -2997,8 +2997,9 @@ function updateBots(dt) {
     const frontTraffic = findNearestCarAhead(bot, 28);
     const sensitivity = state.botSensitivity;
     const pedestrianAvoidance = getPedestrianYield(bot);
-    const queueAvoidance = pedestrianAvoidance ? null : getQueueReverse(bot, frontTraffic);
-    const avoidance = pedestrianAvoidance || queueAvoidance || (sensitivity > 0 ? getPlayerAvoidance(bot, sensitivity, dt) : null);
+    const playerReverseYield = pedestrianAvoidance ? null : getPlayerReverseYield(bot);
+    const queueAvoidance = pedestrianAvoidance || playerReverseYield ? null : getQueueReverse(bot, frontTraffic);
+    const avoidance = pedestrianAvoidance || playerReverseYield || queueAvoidance || (sensitivity > 0 ? getPlayerAvoidance(bot, sensitivity, dt) : null);
     data.pedestrianBacking = Boolean(avoidance?.reverseForPedestrian);
     const intersectionBackOut = stopInfoForIntersectionBackOut(bot, frontTraffic);
     const signalStop = stopInfoForSignal(bot);
@@ -3039,7 +3040,10 @@ function updateBots(dt) {
     const travelSpeed = reversing ? Math.min(Math.abs(data.speed), avoidance.speed) : Math.abs(data.speed);
     data.velocity.copy(travel).multiplyScalar(travelSpeed);
     const candidate = bot.position.clone().addScaledVector(data.velocity, dt);
-    if (botMovementBlocked(bot, candidate)) {
+    const movementBlocked = botMovementBlocked(bot, candidate) && !(
+      avoidance?.reverseForPlayer && playerReverseStepIsSafe(bot, candidate)
+    );
+    if (movementBlocked) {
       data.speed = 0;
       data.velocity.set(0, 0, 0);
       data.braking = true;
@@ -3052,6 +3056,66 @@ function updateBots(dt) {
     if (avoidance) resolveBuildingCollisions(bot, previous);
     wrapBot(bot);
   }
+}
+
+function getPlayerReverseYield(bot) {
+  const player = state.player;
+  const playerData = player.userData;
+  const playerBacking = state.gear === "reverse" && (keys.has("arrowup") || (playerData.speed || 0) < -0.15);
+  if (!playerBacking || state.onFoot || state.playerCrashed) return null;
+
+  const playerForward = getForward(player).normalize();
+  const playerReverse = playerForward.clone().multiplyScalar(-1);
+  const botForward = dirs[bot.userData.dir] || getForward(bot).normalize();
+  if (botForward.dot(playerForward) < 0.72) return null;
+
+  const delta = bot.position.clone().sub(player.position);
+  const behind = delta.dot(playerReverse);
+  if (behind <= 0.5 || behind > 28) return null;
+  const lateralSq = Math.max(0, delta.lengthSq() - behind * behind);
+  if (lateralSq > 8.2) return null;
+
+  const reverseSpeed = THREE.MathUtils.clamp(Math.abs(playerData.speed || 0) + 2, 4.5, 9.5);
+  return {
+    direction: botForward.clone().multiplyScalar(-1),
+    speed: reverseSpeed,
+    reverseForPlayer: true,
+  };
+}
+
+function playerReverseStepIsSafe(bot, candidate) {
+  if (buildingObstacles.some((obstacle) =>
+    Math.abs(candidate.x - obstacle.x) < obstacle.halfX + CAR_HALF_WIDTH + 0.2 &&
+    Math.abs(candidate.z - obstacle.z) < obstacle.halfZ + CAR_HALF_LENGTH + 0.2
+  )) return false;
+
+  const forward = getForward(bot).normalize();
+  const right = new THREE.Vector3(forward.z, 0, -forward.x);
+  const candidateBox = {
+    center: candidate,
+    forward,
+    right,
+    halfWidth: CAR_HALF_WIDTH + 0.08,
+    halfLength: CAR_HALF_LENGTH + 0.08,
+  };
+  for (const other of collidableCars) {
+    if (other === bot || !other.visible || other.userData.waitingForEntry) continue;
+    if (candidate.distanceToSquared(other.position) > (CAR_HALF_LENGTH * 2.8) ** 2) continue;
+    const otherBox = carBox(other);
+    otherBox.halfWidth += 0.08;
+    otherBox.halfLength += 0.08;
+    let overlaps = true;
+    for (const axis of [candidateBox.right, candidateBox.forward, otherBox.right, otherBox.forward]) {
+      const candidateProjection = projectBox(candidateBox, axis);
+      const otherProjection = projectBox(otherBox, axis);
+      if (Math.min(candidateProjection.max, otherProjection.max) - Math.max(candidateProjection.min, otherProjection.min) <= 0) {
+        overlaps = false;
+        break;
+      }
+    }
+    if (overlaps) return false;
+  }
+  return true;
 }
 
 function updateReleasedPoliceTarget(bot, dt) {
