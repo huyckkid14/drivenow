@@ -694,6 +694,18 @@ function createCockpitInterior(car) {
   display.position.set(-0.08, 1.23, 0.355);
   display.rotation.y = Math.PI;
 
+  const clusterCanvas = document.createElement("canvas");
+  clusterCanvas.width = 384;
+  clusterCanvas.height = 192;
+  const clusterTexture = new THREE.CanvasTexture(clusterCanvas);
+  clusterTexture.colorSpace = THREE.SRGBColorSpace;
+  const cluster = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.42, 0.19),
+    new THREE.MeshBasicMaterial({ map: clusterTexture, side: THREE.DoubleSide }),
+  );
+  cluster.position.set(0.38, 1.32, 0.345);
+  cluster.rotation.y = Math.PI;
+
   const backupGuides = new THREE.Group();
   backupGuides.visible = false;
   for (const [color, z, width] of [[0x43e47a, -10.2, 2.35], [0xffd247, -7.2, 2.7], [0xff4b42, -4.25, 3.05]]) {
@@ -747,11 +759,13 @@ function createCockpitInterior(car) {
   const rearviewStem = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.12, 0.06), trim);
   rearviewStem.position.set(0, 2.11, 0.5);
 
-  cockpit.add(dashboard, roof, windshield, wheel, wheelHub, display, infotainment,
+  cockpit.add(dashboard, roof, windshield, wheel, wheelHub, display, cluster, infotainment,
     rearviewHousing, rearviewMirror, rearviewStem);
   cockpit.userData.displayCanvas = displayCanvas;
   cockpit.userData.displayTexture = displayTexture;
   cockpit.userData.displayMaterial = displayMaterial;
+  cockpit.userData.clusterCanvas = clusterCanvas;
+  cockpit.userData.clusterTexture = clusterTexture;
   cockpit.userData.backupGuides = backupGuides;
   car.add(cockpit);
   car.userData.cockpit = cockpit;
@@ -5012,36 +5026,132 @@ function updateCockpitDisplay(speed, rpm, leftActive = false, rightActive = fals
   if (!cockpit) return;
   const canvas = cockpit.userData.displayCanvas;
   const context = canvas.getContext("2d");
-  context.fillStyle = "#05090b";
+  const player = state.player;
+  const mapScale = 3.1;
+  context.fillStyle = "#08171d";
   context.fillRect(0, 0, canvas.width, canvas.height);
-  if (state.policeMode) {
-    context.fillStyle = "#e32636";
-    context.fillRect(0, 0, canvas.width / 2, 18);
-    context.fillStyle = "#247cff";
-    context.fillRect(canvas.width / 2, 0, canvas.width / 2, 18);
-    context.fillStyle = "#eaf5ff";
-    context.font = "bold 22px system-ui";
-    context.textAlign = "center";
-    context.fillText("POLICE PATROL", 256, 46);
-    context.textAlign = "start";
+  context.lineCap = "round";
+  context.lineWidth = 17;
+  context.strokeStyle = "#26363c";
+  const heading = player.rotation.y;
+  const headingSin = Math.sin(heading);
+  const headingCos = Math.cos(heading);
+  const projectMapPoint = (worldX, worldZ) => {
+    const deltaX = worldX - player.position.x;
+    const deltaZ = worldZ - player.position.z;
+    return {
+      x: canvas.width / 2 - (deltaX * headingCos - deltaZ * headingSin) * mapScale,
+      y: canvas.height / 2 - (deltaX * headingSin + deltaZ * headingCos) * mapScale,
+    };
+  };
+  for (const road of GRID) {
+    const verticalStart = projectMapPoint(road, -BOUNDS);
+    const verticalEnd = projectMapPoint(road, BOUNDS);
+    context.beginPath();
+    context.moveTo(verticalStart.x, verticalStart.y);
+    context.lineTo(verticalEnd.x, verticalEnd.y);
+    context.stroke();
+    const horizontalStart = projectMapPoint(-BOUNDS, road);
+    const horizontalEnd = projectMapPoint(BOUNDS, road);
+    context.beginPath();
+    context.moveTo(horizontalStart.x, horizontalStart.y);
+    context.lineTo(horizontalEnd.x, horizontalEnd.y);
+    context.stroke();
   }
-  context.fillStyle = leftActive ? "#ffb000" : "#36444a";
-  context.font = "bold 54px system-ui";
-  context.fillText("◀", 28, state.policeMode ? 104 : 86);
-  context.fillStyle = rightActive ? "#ffb000" : "#36444a";
-  context.fillText("▶", 420, state.policeMode ? 104 : 86);
-  context.fillStyle = "#f4fbff";
-  context.font = "bold 104px system-ui";
-  context.textAlign = "center";
-  context.fillText(String(speed), 256, 122);
-  context.fillStyle = "#8faab5";
-  context.font = "bold 27px system-ui";
-  context.fillText("MPH", 256, 158);
-  context.fillStyle = "#65d6ff";
-  context.font = "bold 30px system-ui";
-  context.fillText(`${rpm} RPM`, 256, 218);
-  context.textAlign = "start";
+  context.strokeStyle = "#b64a4a";
+  context.lineWidth = 7;
+  const drawRaceEllipse = (radiusX, radiusZ) => {
+    context.beginPath();
+    for (let i = 0; i <= 72; i++) {
+      const angle = (i / 72) * Math.PI * 2;
+      const point = projectMapPoint(
+        RACE_CENTER_X + Math.cos(angle) * radiusX,
+        Math.sin(angle) * radiusZ,
+      );
+      if (i === 0) context.moveTo(point.x, point.y);
+      else context.lineTo(point.x, point.y);
+    }
+    context.stroke();
+  };
+  drawRaceEllipse(RACE_OUTER_X, RACE_OUTER_Z);
+  drawRaceEllipse(RACE_INNER_X, RACE_INNER_Z);
+  const raceEntranceStart = projectMapPoint(BOUNDS - 2, -5);
+  const raceEntranceEnd = projectMapPoint(RACE_CENTER_X - RACE_OUTER_X + 2, -5);
+  const raceEntranceStartBottom = projectMapPoint(BOUNDS - 2, 5);
+  const raceEntranceEndBottom = projectMapPoint(RACE_CENTER_X - RACE_OUTER_X + 2, 5);
+  context.lineWidth = 5;
+  context.beginPath();
+  context.moveTo(raceEntranceStart.x, raceEntranceStart.y);
+  context.lineTo(raceEntranceEnd.x, raceEntranceEnd.y);
+  context.moveTo(raceEntranceStartBottom.x, raceEntranceStartBottom.y);
+  context.lineTo(raceEntranceEndBottom.x, raceEntranceEndBottom.y);
+  context.stroke();
+  context.lineWidth = 3;
+  context.strokeStyle = "#5a747e";
+  context.setLineDash([8, 9]);
+  context.beginPath();
+  context.moveTo(canvas.width / 2, 0);
+  context.lineTo(canvas.width / 2, canvas.height);
+  context.moveTo(0, canvas.height / 2);
+  context.lineTo(canvas.width, canvas.height / 2);
+  context.stroke();
+  context.setLineDash([]);
+  context.save();
+  context.translate(canvas.width / 2, canvas.height / 2);
+  context.fillStyle = state.policeMode ? "#4ea0ff" : "#55e6ff";
+  context.strokeStyle = "#e9fcff";
+  context.lineWidth = 4;
+  context.beginPath();
+  context.moveTo(0, -19);
+  context.lineTo(13, 16);
+  context.lineTo(0, 10);
+  context.lineTo(-13, 16);
+  context.closePath();
+  context.fill();
+  context.stroke();
+  context.restore();
+  const raceLabel = projectMapPoint(RACE_CENTER_X, 0);
+  if (raceLabel.x > 0 && raceLabel.x < canvas.width && raceLabel.y > 0 && raceLabel.y < canvas.height) {
+    context.fillStyle = "#ffb1a7";
+    context.font = "bold 18px system-ui";
+    context.textAlign = "center";
+    context.fillText("RACE TRACK", raceLabel.x, raceLabel.y + 6);
+  }
+  context.fillStyle = "rgba(5, 12, 15, 0.82)";
+  context.fillRect(12, 12, 116, 34);
+  context.fillStyle = "#dff8ff";
+  context.font = "bold 21px system-ui";
+  context.textAlign = "left";
+  context.fillText("GPS · LIVE", 24, 36);
   cockpit.userData.displayTexture.needsUpdate = true;
+
+  const clusterCanvas = cockpit.userData.clusterCanvas;
+  const clusterContext = clusterCanvas.getContext("2d");
+  clusterContext.fillStyle = "#05090b";
+  clusterContext.fillRect(0, 0, clusterCanvas.width, clusterCanvas.height);
+  clusterContext.fillStyle = leftActive ? "#ffb000" : "#36444a";
+  clusterContext.font = "bold 38px system-ui";
+  clusterContext.fillText("◀", 18, 48);
+  clusterContext.fillStyle = rightActive ? "#ffb000" : "#36444a";
+  clusterContext.fillText("▶", 322, 48);
+  clusterContext.fillStyle = "#f4fbff";
+  clusterContext.font = "bold 76px system-ui";
+  clusterContext.textAlign = "center";
+  clusterContext.fillText(String(speed), 192, 93);
+  clusterContext.fillStyle = "#8faab5";
+  clusterContext.font = "bold 21px system-ui";
+  clusterContext.fillText("MPH", 192, 119);
+  clusterContext.fillStyle = "#65d6ff";
+  clusterContext.font = "bold 24px system-ui";
+  clusterContext.fillText(`${rpm} RPM`, 192, 160);
+  if (state.policeMode) {
+    clusterContext.fillStyle = "#e32636";
+    clusterContext.fillRect(0, 0, clusterCanvas.width / 2, 8);
+    clusterContext.fillStyle = "#247cff";
+    clusterContext.fillRect(clusterCanvas.width / 2, 0, clusterCanvas.width / 2, 8);
+  }
+  clusterContext.textAlign = "start";
+  cockpit.userData.clusterTexture.needsUpdate = true;
 }
 
 function onKeyDown(event) {
