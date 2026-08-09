@@ -68,14 +68,15 @@ const roads = new THREE.Group();
 const city = new THREE.Group();
 const botColors = [0x3d78ff, 0xf25f5c, 0x70c1b3, 0xf7b267, 0xb388eb, 0x64b96a, 0xef476f];
 
-const ROAD_HALF = 4.7;
-const LANES = [-1.75, 1.75];
-const PLAYER_LANE_OFFSET = 9.5;
+const ROAD_HALF = 7.2;
+const TRAFFIC_LANE_MAGNITUDES = [1.75, 5.25];
 const PLAYER_LANE_WIDTH = 12.5;
-const GRID = [-54, -27, 0, 27, 54];
-const BOUNDS = 68;
-const PLAYER_BOUNDS = 215;
-const RACE_CENTER_X = 145;
+// Keep the wide player-only shoulder completely beyond both ordinary lanes.
+const PLAYER_LANE_OFFSET = ROAD_HALF + PLAYER_LANE_WIDTH / 2 + 0.35;
+const GRID = [-108, -54, 0, 54, 108];
+const BOUNDS = 128;
+const PLAYER_BOUNDS = 290;
+const RACE_CENTER_X = 220;
 const RACE_OUTER_X = 65;
 const RACE_OUTER_Z = 45;
 const RACE_INNER_X = 45;
@@ -113,7 +114,8 @@ const ENGINE_VOLUME = 2.14;
 const REV_SMOKE_INTERVAL = 0.055;
 const TRAFFIC_CYCLE = (SIGNAL_GREEN_TIME + SIGNAL_YELLOW_TIME + SIGNAL_ALL_RED_TIME) * 2;
 const PLAYER_START = new THREE.Vector3(RACE_CENTER_X, 0, 35);
-const SECURITY_ROOM_ENTRY = new THREE.Vector3(72, 0, 9.7);
+const SECURITY_ROOM_X = BOUNDS + 9;
+const SECURITY_ROOM_ENTRY = new THREE.Vector3(SECURITY_ROOM_X, 0, 9.7);
 
 const state = {
   crashed: false,
@@ -266,12 +268,13 @@ function setupIntro() {
 
 function createRoads() {
   const asphalt = new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.82 });
-  const stripe = new THREE.MeshStandardMaterial({ color: 0xf5f1d0, roughness: 0.7 });
+  const centerStripe = new THREE.MeshStandardMaterial({ color: 0xf3c62f, roughness: 0.7 });
+  const laneStripe = new THREE.MeshStandardMaterial({ color: 0xf5f5ed, roughness: 0.7 });
   const crosswalk = new THREE.MeshStandardMaterial({ color: 0xe9ece8, roughness: 0.75 });
   const playerLane = new THREE.MeshStandardMaterial({ color: 0x345f70, roughness: 0.78 });
 
   for (const z of GRID) {
-    const road = new THREE.Mesh(new THREE.BoxGeometry(145, 0.08, ROAD_HALF * 2), asphalt);
+    const road = new THREE.Mesh(new THREE.BoxGeometry(BOUNDS * 2 + 10, 0.08, ROAD_HALF * 2), asphalt);
     road.position.set(0, 0.04, z);
     road.receiveShadow = true;
     roads.add(road);
@@ -279,15 +282,26 @@ function createRoads() {
 
     addPlayerLaneSegments("x", z, playerLane);
 
-    for (let x = -66; x <= 66; x += 9) {
-      const dash = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.1, 0.16), stripe);
-      dash.position.set(x, 0.11, z);
-      roads.add(dash);
+    for (const centerOffset of [-0.14, 0.14]) {
+      const centerLine = new THREE.Mesh(
+        new THREE.BoxGeometry(BOUNDS * 2 + 10, 0.1, 0.12),
+        centerStripe,
+      );
+      centerLine.position.set(0, 0.11, z + centerOffset);
+      roads.add(centerLine);
+    }
+
+    for (let x = -BOUNDS; x <= BOUNDS; x += 9) {
+      for (const side of [-1, 1]) {
+        const laneDash = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.1, 0.1), laneStripe);
+        laneDash.position.set(x, 0.11, z + side * 3.5);
+        roads.add(laneDash);
+      }
     }
   }
 
   for (const x of GRID) {
-    const road = new THREE.Mesh(new THREE.BoxGeometry(ROAD_HALF * 2, 0.09, 145), asphalt);
+    const road = new THREE.Mesh(new THREE.BoxGeometry(ROAD_HALF * 2, 0.09, BOUNDS * 2 + 10), asphalt);
     road.position.set(x, 0.05, 0);
     road.receiveShadow = true;
     roads.add(road);
@@ -295,10 +309,21 @@ function createRoads() {
 
     addPlayerLaneSegments("z", x, playerLane);
 
-    for (let z = -66; z <= 66; z += 9) {
-      const dash = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.11, 4.2), stripe);
-      dash.position.set(x, 0.12, z);
-      roads.add(dash);
+    for (const centerOffset of [-0.14, 0.14]) {
+      const centerLine = new THREE.Mesh(
+        new THREE.BoxGeometry(0.12, 0.11, BOUNDS * 2 + 10),
+        centerStripe,
+      );
+      centerLine.position.set(x + centerOffset, 0.12, 0);
+      roads.add(centerLine);
+    }
+
+    for (let z = -BOUNDS; z <= BOUNDS; z += 9) {
+      for (const side of [-1, 1]) {
+        const laneDash = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.11, 4.2), laneStripe);
+        laneDash.position.set(x + side * 3.5, 0.12, z);
+        roads.add(laneDash);
+      }
     }
   }
 
@@ -308,13 +333,21 @@ function createRoads() {
       plaza.position.set(x, 0.13, z);
       roads.add(plaza);
 
-      for (let i = -2; i <= 2; i++) {
-        const hStripe = new THREE.Mesh(new THREE.BoxGeometry(5.4, 0.15, 0.38), crosswalk);
-        hStripe.position.set(x + i * 1.15, 0.2, z - ROAD_HALF - 1.2);
-        roads.add(hStripe);
-        const vStripe = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.15, 5.4), crosswalk);
-        vStripe.position.set(x - ROAD_HALF - 1.2, 0.2, z + i * 1.15);
-        roads.add(vStripe);
+      const stopLineLength = ROAD_HALF - 0.55;
+      const stopLineCenter = ROAD_HALF / 2;
+      const stopLineSpecs = [
+        { x: x - STOP_LINE_OFFSET, z: z + stopLineCenter, width: 0.36, depth: stopLineLength },
+        { x: x + STOP_LINE_OFFSET, z: z - stopLineCenter, width: 0.36, depth: stopLineLength },
+        { x: x - stopLineCenter, z: z + STOP_LINE_OFFSET, width: stopLineLength, depth: 0.36 },
+        { x: x + stopLineCenter, z: z - STOP_LINE_OFFSET, width: stopLineLength, depth: 0.36 },
+      ];
+      for (const spec of stopLineSpecs) {
+        const stopLine = new THREE.Mesh(
+          new THREE.BoxGeometry(spec.width, 0.15, spec.depth),
+          crosswalk,
+        );
+        stopLine.position.set(spec.x, 0.2, spec.z);
+        roads.add(stopLine);
       }
     }
   }
@@ -324,8 +357,9 @@ function createRacingArea() {
   const asphalt = new THREE.MeshStandardMaterial({ color: 0x24282c, roughness: 0.76 });
   const curbRed = new THREE.MeshStandardMaterial({ color: 0xd93636, roughness: 0.65 });
   const curbWhite = new THREE.MeshStandardMaterial({ color: 0xf4f4ed, roughness: 0.65 });
-  const connector = new THREE.Mesh(new THREE.BoxGeometry(22, 0.1, 10), asphalt);
-  connector.position.set(78, 0.07, 0);
+  const raceEntranceX = RACE_CENTER_X - RACE_OUTER_X;
+  const connector = new THREE.Mesh(new THREE.BoxGeometry(raceEntranceX - BOUNDS + 8, 0.1, 10), asphalt);
+  connector.position.set((BOUNDS + raceEntranceX) / 2, 0.07, 0);
   connector.receiveShadow = true;
   roads.add(connector);
 
@@ -363,12 +397,12 @@ function createRacingArea() {
   const gateMaterial = new THREE.MeshStandardMaterial({ color: 0x168dcc, emissive: 0x0b4261, emissiveIntensity: 0.5 });
   for (const z of [-5.7, 5.7]) {
     const pillar = new THREE.Mesh(new THREE.BoxGeometry(1, 5.5, 1), gateMaterial);
-    pillar.position.set(69.5, 2.75, z);
+    pillar.position.set(BOUNDS + 1.5, 2.75, z);
     pillar.castShadow = true;
     roads.add(pillar);
   }
   const banner = new THREE.Mesh(new THREE.BoxGeometry(1, 0.9, 12.4), gateMaterial);
-  banner.position.set(69.5, 5.2, 0);
+  banner.position.set(BOUNDS + 1.5, 5.2, 0);
   roads.add(banner);
 }
 
@@ -416,18 +450,18 @@ function createBlocks() {
     for (let zi = 0; zi < GRID.length - 1; zi++) {
       const cx = (GRID[xi] + GRID[xi + 1]) / 2;
       const cz = (GRID[zi] + GRID[zi + 1]) / 2;
-      const pad = new THREE.Mesh(new THREE.BoxGeometry(15.6, 0.18, 15.6), sidewalkMat);
+      const pad = new THREE.Mesh(new THREE.BoxGeometry(12, 0.18, 12), sidewalkMat);
       pad.position.set(cx, 0.1, cz);
       pad.receiveShadow = true;
       buildings.add(pad);
 
-      const count = 2 + ((xi + zi) % 2);
+      const count = 1;
       for (let i = 0; i < count; i++) {
-        const w = 4.8 + ((i + xi) % 3) * 1.4;
-        const d = 4.6 + ((i + zi) % 3) * 1.2;
+        const w = 7.8 + ((xi + zi) % 2) * 1.4;
+        const d = 7.6 + ((xi * 2 + zi) % 2) * 1.2;
         const h = 7 + ((xi * 5 + zi * 3 + i * 4) % 18);
-        const bx = cx + (i % 2 ? 4.2 : -4.1);
-        const bz = cz + (i > 1 ? 4.0 : -3.8);
+        const bx = cx;
+        const bz = cz;
         const mat = new THREE.MeshStandardMaterial({
           color: new THREE.Color().setHSL(0.07 + ((xi + zi + i) % 5) * 0.055, 0.25, 0.45),
           roughness: 0.68,
@@ -450,14 +484,17 @@ function createBlocks() {
 }
 
 function createTrafficLights() {
+  // Compact corner-mounted signals keep the mast arms proportional to the road.
+  const fixtureOffset = ROAD_HALF + 0.35;
+  const lampOffset = ROAD_HALF - 2.45;
   for (const x of GRID) {
     for (const z of GRID) {
       const poleMat = new THREE.MeshStandardMaterial({ color: 0x28312f, roughness: 0.6 });
       const corners = [
-        { px: x - 6.3, pz: z - 6.3, axis: "ns", yaw: 0, lx: x - 6.3, lz: z - 3.75 },
-        { px: x + 6.3, pz: z + 6.3, axis: "ns", yaw: Math.PI, lx: x + 6.3, lz: z + 3.75 },
-        { px: x - 6.3, pz: z + 6.3, axis: "ew", yaw: -Math.PI / 2, lx: x - 3.75, lz: z + 6.3 },
-        { px: x + 6.3, pz: z - 6.3, axis: "ew", yaw: Math.PI / 2, lx: x + 3.75, lz: z - 6.3 },
+        { px: x - fixtureOffset, pz: z - fixtureOffset, axis: "ns", yaw: 0, lx: x - fixtureOffset, lz: z - lampOffset },
+        { px: x + fixtureOffset, pz: z + fixtureOffset, axis: "ns", yaw: Math.PI, lx: x + fixtureOffset, lz: z + lampOffset },
+        { px: x - fixtureOffset, pz: z + fixtureOffset, axis: "ew", yaw: -Math.PI / 2, lx: x - lampOffset, lz: z + fixtureOffset },
+        { px: x + fixtureOffset, pz: z - fixtureOffset, axis: "ew", yaw: Math.PI / 2, lx: x + lampOffset, lz: z - fixtureOffset },
       ];
 
       for (const corner of corners) {
@@ -467,8 +504,9 @@ function createTrafficLights() {
         city.add(pole);
 
         const armLength = Math.abs(corner.lx - corner.px) > Math.abs(corner.lz - corner.pz) ? "x" : "z";
+        const armSpan = Math.hypot(corner.lx - corner.px, corner.lz - corner.pz);
         const arm = new THREE.Mesh(
-          new THREE.BoxGeometry(armLength === "x" ? 2.8 : 0.18, 0.18, armLength === "z" ? 2.8 : 0.18),
+          new THREE.BoxGeometry(armLength === "x" ? armSpan : 0.18, 0.18, armLength === "z" ? armSpan : 0.18),
           poleMat,
         );
         arm.position.set((corner.px + corner.lx) / 2, 4.78, (corner.pz + corner.lz) / 2);
@@ -485,17 +523,17 @@ function createTrafficLights() {
 function createSecurityCameraRoom() {
   const wall = new THREE.MeshStandardMaterial({ color: 0x26323b, roughness: 0.58, metalness: 0.12 });
   const building = new THREE.Mesh(new THREE.BoxGeometry(14, 7, 12), wall);
-  building.position.set(72, 3.5, 17);
+  building.position.set(SECURITY_ROOM_X, 3.5, 17);
   building.castShadow = true;
   building.receiveShadow = true;
   buildings.add(building);
-  buildingObstacles.push({ x: 72, z: 17, halfX: 7.1, halfZ: 6.1 });
+  buildingObstacles.push({ x: SECURITY_ROOM_X, z: 17, halfX: 7.1, halfZ: 6.1 });
 
   const door = new THREE.Mesh(
     new THREE.BoxGeometry(2.4, 3.4, 0.2),
     new THREE.MeshStandardMaterial({ color: 0x10171c, metalness: 0.72, roughness: 0.28 }),
   );
-  door.position.set(72, 1.7, 10.92);
+  door.position.set(SECURITY_ROOM_X, 1.7, 10.92);
   buildings.add(door);
 
   const signCanvas = document.createElement("canvas");
@@ -516,28 +554,29 @@ function createSecurityCameraRoom() {
     new THREE.PlaneGeometry(13, 2.05),
     new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(signCanvas) }),
   );
-  sign.position.set(72, 5.35, 10.76);
+  sign.position.set(SECURITY_ROOM_X, 5.35, 10.76);
   sign.rotation.y = Math.PI;
   buildings.add(sign);
 
   const beacon = new THREE.PointLight(0x4dd9ff, 18, 12);
-  beacon.position.set(72, 3.8, 9.6);
+  beacon.position.set(SECURITY_ROOM_X, 3.8, 9.6);
   buildings.add(beacon);
 }
 
 function createIntersectionSecurityCameras() {
+  const cameraOffset = ROAD_HALF + 0.55;
   const poleMaterial = new THREE.MeshStandardMaterial({ color: 0x3b464b, metalness: 0.55, roughness: 0.38 });
   const cameraMaterial = new THREE.MeshStandardMaterial({ color: 0xe8edf0, metalness: 0.25, roughness: 0.42 });
   for (const x of GRID) {
     for (const z of GRID) {
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 6.5, 10), poleMaterial);
-      pole.position.set(x + 7.5, 3.25, z + 7.5);
+      pole.position.set(x + cameraOffset, 3.25, z + cameraOffset);
       city.add(pole);
       const oppositePole = pole.clone();
-      oppositePole.position.set(x - 7.5, 3.25, z - 7.5);
+      oppositePole.position.set(x - cameraOffset, 3.25, z - cameraOffset);
       city.add(oppositePole);
       const housing = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.48, 1.15), cameraMaterial);
-      housing.position.set(x + 7.5, 6.45, z + 7.1);
+      housing.position.set(x + cameraOffset, 6.45, z + cameraOffset - 0.4);
       housing.rotation.x = -0.24;
       city.add(housing);
       const lens = new THREE.Mesh(
@@ -545,25 +584,25 @@ function createIntersectionSecurityCameras() {
         new THREE.MeshBasicMaterial({ color: 0x071018 }),
       );
       lens.rotation.x = Math.PI / 2;
-      lens.position.set(x + 7.5, 6.36, z + 6.48);
+      lens.position.set(x + cameraOffset, 6.36, z + cameraOffset - 1.02);
       city.add(lens);
 
       const oppositeHousing = housing.clone();
-      oppositeHousing.position.set(x - 7.5, 6.45, z - 7.1);
+      oppositeHousing.position.set(x - cameraOffset, 6.45, z - cameraOffset + 0.4);
       oppositeHousing.rotation.y = Math.PI;
       city.add(oppositeHousing);
       const oppositeLens = lens.clone();
-      oppositeLens.position.set(x - 7.5, 6.36, z - 6.48);
+      oppositeLens.position.set(x - cameraOffset, 6.36, z - cameraOffset + 1.02);
       city.add(oppositeLens);
       const recordingLight = new THREE.Mesh(
         new THREE.SphereGeometry(0.1, 8, 6),
         new THREE.MeshBasicMaterial({ color: 0xff2c2c }),
       );
-      recordingLight.position.set(x + 7.77, 6.58, z + 6.68);
+      recordingLight.position.set(x + cameraOffset + 0.27, 6.58, z + cameraOffset - 0.82);
       city.add(recordingLight);
 
       const view = new THREE.PerspectiveCamera(62, 1, 0.1, 260);
-      view.position.set(x + 7.5, 6.35, z + 7.1);
+      view.position.set(x + cameraOffset, 6.35, z + cameraOffset - 0.4);
       view.lookAt(x, 0.5, z);
       const target = new THREE.WebGLRenderTarget(320, 180, {
         minFilter: THREE.LinearFilter,
@@ -1080,14 +1119,18 @@ function createBots() {
 function makeBotEntries() {
   const entries = [];
   for (const z of GRID) {
-    entries.push({ x: -BOUNDS, z: z + LANES[1], dir: "east" });
-    entries.push({ x: BOUNDS, z: z + LANES[0], dir: "west" });
+    for (const laneIndex of [0, 1]) {
+      entries.push({ x: -BOUNDS, z: z + laneOffsetForDirection("east", laneIndex), dir: "east", laneIndex });
+      entries.push({ x: BOUNDS, z: z + laneOffsetForDirection("west", laneIndex), dir: "west", laneIndex });
+    }
   }
   for (const x of GRID) {
-    entries.push({ x: x + LANES[0], z: BOUNDS, dir: "north" });
-    entries.push({ x: x + LANES[1], z: -BOUNDS, dir: "south" });
+    for (const laneIndex of [0, 1]) {
+      entries.push({ x: x + laneOffsetForDirection("north", laneIndex), z: BOUNDS, dir: "north", laneIndex });
+      entries.push({ x: x + laneOffsetForDirection("south", laneIndex), z: -BOUNDS, dir: "south", laneIndex });
+    }
   }
-  return entries;
+  return distributeTrafficCandidates(entries, 7411);
 }
 
 function makeBotStarts() {
@@ -1096,15 +1139,19 @@ function makeBotStarts() {
 
   for (const z of GRID) {
     for (let x = -BOUNDS; x <= BOUNDS; x += BOT_POPULATION_SPACING) {
-      horizontal.push({ x, z: z + LANES[1], dir: "east" });
-      horizontal.push({ x: -x, z: z + LANES[0], dir: "west" });
+      for (const laneIndex of [0, 1]) {
+        horizontal.push({ x, z: z + laneOffsetForDirection("east", laneIndex), dir: "east", laneIndex });
+        horizontal.push({ x: -x, z: z + laneOffsetForDirection("west", laneIndex), dir: "west", laneIndex });
+      }
     }
   }
 
   for (const x of GRID) {
     for (let z = -BOUNDS; z <= BOUNDS; z += BOT_POPULATION_SPACING) {
-      vertical.push({ x: x + LANES[0], z: -z, dir: "north" });
-      vertical.push({ x: x + LANES[1], z, dir: "south" });
+      for (const laneIndex of [0, 1]) {
+        vertical.push({ x: x + laneOffsetForDirection("north", laneIndex), z: -z, dir: "north", laneIndex });
+        vertical.push({ x: x + laneOffsetForDirection("south", laneIndex), z, dir: "south", laneIndex });
+      }
     }
   }
 
@@ -1114,7 +1161,20 @@ function makeBotStarts() {
     if (horizontal[i]) starts.push(horizontal[i]);
     if (vertical[i]) starts.push(vertical[i]);
   }
-  return starts;
+  return distributeTrafficCandidates(starts, 19387);
+}
+
+function distributeTrafficCandidates(candidates, seed) {
+  // A deterministic shuffle prevents the first 200 slots from all belonging
+  // to the same road or corner while keeping reloads reproducible.
+  const distributed = [...candidates];
+  let randomState = seed >>> 0;
+  for (let i = distributed.length - 1; i > 0; i--) {
+    randomState = (randomState * 1664525 + 1013904223) >>> 0;
+    const swapIndex = randomState % (i + 1);
+    [distributed[i], distributed[swapIndex]] = [distributed[swapIndex], distributed[i]];
+  }
+  return distributed;
 }
 
 function spawnBot(start) {
@@ -1128,6 +1188,7 @@ function spawnBot(start) {
     desiredSpeed: 13 + (index % 3) * 2.2,
     maxSpeed: 20,
     dir: start.dir,
+    laneIndex: start.laneIndex || 0,
     turnMemory: state.time,
     immobilized: false,
     hazard: false,
@@ -1250,8 +1311,8 @@ function createSkylineDetails() {
   const treeMat = new THREE.MeshStandardMaterial({ color: 0x276f42, roughness: 0.8 });
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0x7a5630, roughness: 0.8 });
   for (let i = 0; i < 70; i++) {
-    const x = -72 + (i * 17) % 145;
-    const z = -72 + (i * 31) % 145;
+    const x = -BOUNDS + (i * 29) % (BOUNDS * 2);
+    const z = -BOUNDS + (i * 47) % (BOUNDS * 2);
     if (isOnRoad(x, z)) continue;
     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 1.2, 8), trunkMat);
     trunk.position.set(x, 0.65, z);
@@ -2972,6 +3033,7 @@ function updateBots(dt) {
       if (canSpawnBotAt(data.waitingForEntry, bot)) {
         bot.position.set(data.waitingForEntry.x, 0, data.waitingForEntry.z);
         data.dir = data.waitingForEntry.dir;
+        data.laneIndex = data.waitingForEntry.laneIndex || 0;
         data.speed = 0;
         data.velocity.set(0, 0, 0);
         data.waitingForEntry = null;
@@ -3250,10 +3312,9 @@ function createPoliceReleasePlan(bot, attempt) {
   const forward = dirs[data.dir] || getForward(bot).normalize();
   const horizontal = data.dir === "east" || data.dir === "west";
   const destination = bot.position.clone().addScaledVector(forward, Math.max(10, 14 - attempt * 1.5));
-  if (data.dir === "east") destination.z = nearestGrid(bot.position.z) + LANES[1];
-  if (data.dir === "west") destination.z = nearestGrid(bot.position.z) + LANES[0];
-  if (data.dir === "north") destination.x = nearestGrid(bot.position.x) + LANES[0];
-  if (data.dir === "south") destination.x = nearestGrid(bot.position.x) + LANES[1];
+  const laneOffset = laneOffsetForDirection(data.dir, data.laneIndex || 0);
+  if (data.dir === "east" || data.dir === "west") destination.z = nearestGrid(bot.position.z) + laneOffset;
+  if (data.dir === "north" || data.dir === "south") destination.x = nearestGrid(bot.position.x) + laneOffset;
   const mergePoint = bot.position.clone().addScaledVector(forward, Math.max(3.2, 5.2 - attempt * 0.5));
   const laneBias = Math.min(0.88, 0.68 + attempt * 0.08);
   if (horizontal) mergePoint.z = THREE.MathUtils.lerp(bot.position.z, destination.z, laneBias);
@@ -3711,10 +3772,14 @@ function turnOptions(dir) {
 
 function snapToLane(bot) {
   const data = bot.userData;
-  if (data.dir === "east") bot.position.z = nearestGrid(bot.position.z) + LANES[1];
-  if (data.dir === "west") bot.position.z = nearestGrid(bot.position.z) + LANES[0];
-  if (data.dir === "north") bot.position.x = nearestGrid(bot.position.x) + LANES[0];
-  if (data.dir === "south") bot.position.x = nearestGrid(bot.position.x) + LANES[1];
+  const laneOffset = laneOffsetForDirection(data.dir, data.laneIndex || 0);
+  if (data.dir === "east" || data.dir === "west") bot.position.z = nearestGrid(bot.position.z) + laneOffset;
+  if (data.dir === "north" || data.dir === "south") bot.position.x = nearestGrid(bot.position.x) + laneOffset;
+}
+
+function laneOffsetForDirection(dir, laneIndex = 0) {
+  const magnitude = TRAFFIC_LANE_MAGNITUDES[laneIndex] || TRAFFIC_LANE_MAGNITUDES[0];
+  return dir === "east" || dir === "south" ? magnitude : -magnitude;
 }
 
 function stopInfoForSignal(bot) {
@@ -3723,7 +3788,7 @@ function stopInfoForSignal(bot) {
   const axis = data.dir === "east" || data.dir === "west" ? "ew" : "ns";
   const ix = nearestGrid(bot.position.x);
   const iz = nearestGrid(bot.position.z);
-  const stopCenter = stopCenterForDirection(ix, iz, data.dir);
+  const stopCenter = stopCenterForDirection(ix, iz, data.dir, data.laneIndex || 0);
   const toStop = stopCenter.clone().sub(bot.position);
   const ahead = toStop.dot(forward);
   // Keep control of a car that has crossed the paint so it can reverse back
@@ -3747,7 +3812,7 @@ function stopInfoForBlockedIntersection(bot, frontTraffic) {
   if (leadForwardSpeed > 1.2) return null;
   const ix = nearestGrid(bot.position.x);
   const iz = nearestGrid(bot.position.z);
-  const stopCenter = stopCenterForDirection(ix, iz, data.dir);
+  const stopCenter = stopCenterForDirection(ix, iz, data.dir, data.laneIndex || 0);
   const ahead = stopCenter.clone().sub(bot.position).dot(forward);
   if (ahead < -0.15 || ahead > STOP_DISTANCE) return null;
   const clearIntersectionDistance = ahead + ROAD_HALF * 2 + CAR_HALF_LENGTH * 2 + BOT_BUMPER_GAP;
@@ -3770,7 +3835,7 @@ function stopInfoForIntersectionBackOut(bot, frontTraffic) {
   );
   if (!stoppedAhead && !botMovementBlocked(bot, bot.position.clone().addScaledVector(forward, 0.35))) return null;
 
-  const stopCenter = stopCenterForDirection(ix, iz, data.dir);
+  const stopCenter = stopCenterForDirection(ix, iz, data.dir, data.laneIndex || 0);
   const ahead = stopCenter.clone().sub(bot.position).dot(forward);
   if (ahead >= -0.1) return null;
   return { stopCenter, forward, ahead, clearingIntersection: true };
@@ -3783,11 +3848,12 @@ function stopLineApproachSpeed(stop) {
   return THREE.MathUtils.clamp(stop.ahead * 1.55, 1.25, 7.5);
 }
 
-function stopCenterForDirection(ix, iz, dir) {
-  if (dir === "east") return new THREE.Vector3(ix - STOP_LINE_OFFSET - CAR_HALF_LENGTH, 0, iz + LANES[1]);
-  if (dir === "west") return new THREE.Vector3(ix + STOP_LINE_OFFSET + CAR_HALF_LENGTH, 0, iz + LANES[0]);
-  if (dir === "north") return new THREE.Vector3(ix + LANES[0], 0, iz + STOP_LINE_OFFSET + CAR_HALF_LENGTH);
-  return new THREE.Vector3(ix + LANES[1], 0, iz - STOP_LINE_OFFSET - CAR_HALF_LENGTH);
+function stopCenterForDirection(ix, iz, dir, laneIndex = 0) {
+  const laneOffset = laneOffsetForDirection(dir, laneIndex);
+  if (dir === "east") return new THREE.Vector3(ix - STOP_LINE_OFFSET - CAR_HALF_LENGTH, 0, iz + laneOffset);
+  if (dir === "west") return new THREE.Vector3(ix + STOP_LINE_OFFSET + CAR_HALF_LENGTH, 0, iz + laneOffset);
+  if (dir === "north") return new THREE.Vector3(ix + laneOffset, 0, iz + STOP_LINE_OFFSET + CAR_HALF_LENGTH);
+  return new THREE.Vector3(ix + laneOffset, 0, iz - STOP_LINE_OFFSET - CAR_HALF_LENGTH);
 }
 
 function alignWithStopLine(bot, stop, dt, previous, canCreep) {
@@ -3976,7 +4042,7 @@ function intersectionApproachSpeed(bot) {
   const forward = dirs[data.dir];
   const ix = nearestGrid(bot.position.x);
   const iz = nearestGrid(bot.position.z);
-  const stopCenter = stopCenterForDirection(ix, iz, data.dir);
+  const stopCenter = stopCenterForDirection(ix, iz, data.dir, data.laneIndex || 0);
   const ahead = stopCenter.clone().sub(bot.position).dot(forward);
   if (ahead < 0 || ahead > 18) return data.desiredSpeed;
   return THREE.MathUtils.lerp(3.5, 9, ahead / 18);
@@ -4201,10 +4267,10 @@ function findWrongWayWitness() {
   let laneOffset;
   if (onHorizontal) {
     expectedDir = zOffset > 0 ? "east" : "west";
-    laneOffset = Math.abs(Math.abs(zOffset) - Math.abs(LANES[0]));
+    laneOffset = Math.min(...TRAFFIC_LANE_MAGNITUDES.map((offset) => Math.abs(Math.abs(zOffset) - offset)));
   } else {
     expectedDir = xOffset < 0 ? "north" : "south";
-    laneOffset = Math.abs(Math.abs(xOffset) - Math.abs(LANES[0]));
+    laneOffset = Math.min(...TRAFFIC_LANE_MAGNITUDES.map((offset) => Math.abs(Math.abs(xOffset) - offset)));
   }
   if (laneOffset > CAR_HALF_WIDTH + 0.75) return null;
   if (getForward(player).dot(dirs[expectedDir]) > -0.35) return null;
@@ -6121,7 +6187,7 @@ function keepNearRoad(car) {
 
 function wrapBot(bot) {
   const data = bot.userData;
-  const next = { x: bot.position.x, z: bot.position.z, dir: data.dir };
+  const next = { x: bot.position.x, z: bot.position.z, dir: data.dir, laneIndex: data.laneIndex || 0 };
   let wrapped = false;
 
   if (next.x > BOUNDS) {
