@@ -3941,6 +3941,7 @@ function updateBlindSpotWarnings() {
   const right = new THREE.Vector3(forward.z, 0, -forward.x);
   for (const car of collidableCars) {
     if (car === player || !car.visible || car.userData.waitingForEntry || car.userData.immobilized || car.userData.crashed) continue;
+    if (getForward(car).normalize().dot(forward) < 0.25) continue;
     const delta = car.position.clone().sub(player.position);
     const longitudinal = delta.dot(forward);
     const lateral = delta.dot(right);
