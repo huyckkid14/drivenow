@@ -102,6 +102,7 @@ const SEVERE_HONK_COOLDOWN = 1.55;
 const WRONG_WAY_HONK_COOLDOWN = 1.7;
 const COLLISION_BROAD_PHASE = 5.3;
 const BUILDING_BOUNCE = 0.18;
+const PLAYER_BUILDING_CRASH_SPEED = 12;
 const CRASH_FRICTION = 4.8;
 const CRASH_SPIN_FRICTION = 3.6;
 const DAMAGE_GRAVITY = 16;
@@ -137,6 +138,7 @@ const state = {
   doorMotionStart: -10,
   carTransition: null,
   crashMeeting: null,
+  buildingHelper: null,
   policeMode: false,
   policeTarget: null,
   policeSiren: null,
@@ -1370,6 +1372,7 @@ function animate() {
   updateNpcPedestrians(dt);
   updateBlastPedestrians(dt);
   updateCarDoor(dt);
+  updateBuildingCrashHelper(dt);
   updateCrashMeeting(dt);
   updateBots(dt);
   updateReverseCrossTrafficWarning();
@@ -1546,7 +1549,7 @@ function updatePlayer(dt) {
   const throttle = keys.has("arrowup") ? 1 : 0;
   const brakeKey = keys.has("arrowdown") ? 1 : 0;
   const gearDirection = state.gear === "reverse" ? -1 : 1;
-  if (data.player && data.immobilized && state.playerCrashed && (throttle || brakeKey) && !state.onFoot) {
+  if (data.player && data.immobilized && !data.destroyed && state.playerCrashed && (throttle || brakeKey) && !state.onFoot) {
     data.immobilized = false;
     data.limpMode = true;
     statusEl.textContent = "Wrecked car moving in limp mode — reduced power and unstable handling";
@@ -2341,6 +2344,7 @@ function damagePedestriansNearExplosion(origin) {
   if (state.onFoot && state.pedestrian?.visible) people.push(state.pedestrian);
   for (const person of npcPedestrians) if (person.visible) people.push(person);
   for (const responder of crashResponders) if (responder.person?.visible) people.push(responder.person);
+  if (state.buildingHelper?.person?.visible) people.push(state.buildingHelper.person);
   for (const driver of hijackedDrivers) if (driver.visible) people.push(driver);
 
   for (const person of new Set(people)) {
@@ -3096,6 +3100,10 @@ function stopPoliceSiren() {
 function updateBots(dt) {
   for (const bot of cars) {
     const data = bot.userData;
+    if (data.buildingHelpResponse) {
+      updateBuildingHelperCar(bot, dt);
+      continue;
+    }
     if (data.player || data.immobilized || data.crashed) continue;
     if (data.policeRelease) {
       updateReleasedPoliceTarget(bot, dt);
@@ -3577,6 +3585,7 @@ function getPedestrianYield(bot) {
   for (const responder of crashResponders) {
     if (responder.person?.visible) people.push(responder.person);
   }
+  if (state.buildingHelper?.person?.visible) people.push(state.buildingHelper.person);
   people.push(...hijackedDrivers);
   for (const person of people) {
     const delta = person.position.clone().sub(bot.position);
@@ -4683,6 +4692,130 @@ function spawnCrashResponder(responder) {
   responder.replanAt = 0;
   responder.blockedSince = null;
   responder.forceDirectUntil = 0;
+}
+
+function startBuildingCrashHelp() {
+  if (state.buildingHelper) return;
+  const crashNormal = state.player.userData.buildingCrashNormal?.clone().setY(0).normalize();
+  if (!crashNormal) return;
+  const eligible = cars
+    .filter((car) => !car.userData.player && !car.userData.immobilized && !car.userData.crashed && !car.userData.policePullOver)
+    .filter((car) => car.position.clone().sub(state.player.position).dot(crashNormal) > -1.5)
+    .sort((a, b) => a.position.distanceToSquared(state.player.position) - b.position.distanceToSquared(state.player.position))
+    .slice(0, 10);
+  if (!eligible.length) return;
+  const car = eligible[Math.floor(Math.random() * eligible.length)];
+  const destination = findBuildingHelperDestination(state.player.position, car, crashNormal);
+  if (!destination) return;
+  car.userData.buildingHelpResponse = {
+    destination,
+    roadYaw: car.rotation.y,
+    phase: "approach",
+    route: null,
+    routeIndex: 0,
+  };
+  car.userData.hazard = true;
+  state.buildingHelper = { car, person: null };
+  statusEl.textContent = "Car destroyed — a nearby driver is pulling over to help";
+}
+
+function findBuildingHelperDestination(playerPosition, helperCar, crashNormal) {
+  const candidates = [];
+  const tangent = new THREE.Vector3(-crashNormal.z, 0, crashNormal.x);
+  for (const outwardDistance of [4.8, 6.2, 7.6, 9]) {
+    for (const sideDistance of [0, 2.5, -2.5, 5, -5, 7.5, -7.5]) {
+      candidates.push(
+        playerPosition.clone()
+          .addScaledVector(crashNormal, outwardDistance)
+          .addScaledVector(tangent, sideDistance),
+      );
+    }
+  }
+  return candidates
+    .filter((point) => Math.abs(point.x) < PLAYER_BOUNDS && Math.abs(point.z) < PLAYER_BOUNDS)
+    .filter((point) => isPlayerOnlyLanePosition(point))
+    .filter((point) => point.clone().sub(playerPosition).dot(crashNormal) >= 4.5)
+    .filter((point) => !buildingObstacles.some((obstacle) =>
+      Math.abs(point.x - obstacle.x) < obstacle.halfX + CAR_HALF_WIDTH + 0.45 &&
+      Math.abs(point.z - obstacle.z) < obstacle.halfZ + CAR_HALF_LENGTH + 0.45,
+    ))
+    .filter((point) => !cars.some((car) =>
+      car !== helperCar && car !== state.player && car.visible && point.distanceToSquared(car.position) < 24,
+    ))
+    .sort((a, b) => a.distanceToSquared(helperCar.position) - b.distanceToSquared(helperCar.position))[0] || null;
+}
+
+function updateBuildingHelperCar(car, dt) {
+  const response = car.userData.buildingHelpResponse;
+  if (!response) return;
+  if (response.phase === "approach") {
+    const delta = response.destination.clone().sub(car.position);
+    if (delta.length() > 0.75) {
+      const desiredYaw = Math.atan2(delta.x, delta.z);
+      car.rotation.y = lerpAngle(car.rotation.y, desiredYaw, Math.min(1, dt * 1.8));
+      car.userData.speed = moveToward(car.userData.speed || 0, 5.2, dt * 5.5);
+      car.userData.velocity.copy(getForward(car)).multiplyScalar(car.userData.speed);
+      const previous = car.position.clone();
+      const candidate = car.position.clone().addScaledVector(car.userData.velocity, dt);
+      if (!botMovementBlocked(car, candidate)) car.position.copy(candidate);
+      else car.userData.speed = moveToward(car.userData.speed, 0, dt * 18);
+      resolveBuildingCollisions(car, previous);
+      car.userData.braking = car.userData.speed < 1;
+      return;
+    }
+    response.phase = "stopping";
+    response.stoppedAt = state.time;
+  }
+  car.userData.speed = 0;
+  car.userData.velocity.set(0, 0, 0);
+  car.userData.braking = true;
+  car.rotation.y = lerpAngle(car.rotation.y, response.roadYaw, Math.min(1, dt * 2));
+  const door = car.userData.driverDoor;
+  if (door && !state.buildingHelper.person) door.rotation.y = moveToward(door.rotation.y, -1.05, dt * 2.8);
+  if (!state.buildingHelper.person && state.time >= response.stoppedAt + 0.65 && (!door || door.rotation.y < -0.82)) {
+    const person = makeNpcPedestrian(800);
+    const exitPoint = new THREE.Vector3(2.3, 0, -0.35);
+    car.localToWorld(exitPoint);
+    person.position.copy(exitPoint);
+    person.rotation.y = car.rotation.y;
+    city.add(person);
+    state.buildingHelper.person = person;
+    response.phase = "walking";
+    response.route = null;
+    statusEl.textContent = "The driver pulled over and is coming to help";
+  }
+}
+
+function updateBuildingCrashHelper(dt) {
+  const helper = state.buildingHelper;
+  if (!helper?.person) return;
+  const response = helper.car.userData.buildingHelpResponse;
+  const target = state.player.position.clone();
+  const awayFromCar = helper.person.position.clone().sub(target).setY(0);
+  if (awayFromCar.lengthSq() < 0.01) awayFromCar.set(1, 0, 0);
+  target.addScaledVector(awayFromCar.normalize(), 2.4);
+  if (!response.route || state.time >= (response.replanAt || 0)) {
+    response.route = planCrashWalkingRoute(helper.person.position, target, helper.car);
+    response.routeIndex = 0;
+    response.replanAt = state.time + 1.3;
+  }
+  while (response.routeIndex < response.route.length - 1 && helper.person.position.distanceTo(response.route[response.routeIndex]) < 0.3) {
+    response.routeIndex += 1;
+  }
+  const waypoint = response.route[response.routeIndex] || target;
+  const delta = waypoint.clone().sub(helper.person.position);
+  if (helper.person.position.distanceTo(target) < 0.35) {
+    setNpcWalkingPose(helper.person.userData, 0);
+    statusEl.textContent = "A nearby driver is here to help";
+    return;
+  }
+  const distance = delta.length();
+  if (distance < 0.01) return;
+  delta.normalize();
+  helper.person.position.addScaledVector(delta, Math.min(distance, dt * 2.2));
+  helper.person.rotation.y = Math.atan2(delta.x, delta.z);
+  helper.person.userData.gait += dt * 7;
+  setNpcWalkingPose(helper.person.userData, Math.sin(helper.person.userData.gait) * 0.58);
 }
 
 function planCrashWalkingRoute(start, target, ownCar, padding = 6) {
@@ -6162,6 +6295,7 @@ function restartCity() {
   state.grenadeChargeMeter = null;
   if (state.carBeacon) city.remove(state.carBeacon);
   if (state.crashMeeting?.arrow) city.remove(state.crashMeeting.arrow);
+  if (state.buildingHelper?.person) city.remove(state.buildingHelper.person);
   for (const responder of crashResponders) {
     if (responder.person) city.remove(responder.person);
   }
@@ -6169,6 +6303,7 @@ function restartCity() {
   hijackedDrivers.length = 0;
   crashResponders.length = 0;
   state.crashMeeting = null;
+  state.buildingHelper = null;
   for (const car of cars) {
     destroyEngineVoice(car);
     city.remove(car);
@@ -6240,6 +6375,12 @@ function resolveBuildingCollisions(car, previous) {
 
     const velocity = carVelocity(car);
     const normalSpeed = velocity.dot(normal);
+    const impactSpeed = Math.max(0, -normalSpeed);
+    if (car.userData.player && !car.userData.destroyed && impactSpeed >= PLAYER_BUILDING_CRASH_SPEED) {
+      triggerPlayerBuildingCrash(car, normal, velocity, impactSpeed);
+      hit = true;
+      break;
+    }
     if (normalSpeed < 0) {
       velocity.addScaledVector(normal, -(1 + BUILDING_BOUNCE) * normalSpeed);
     }
@@ -6248,6 +6389,35 @@ function resolveBuildingCollisions(car, previous) {
     hit = true;
   }
   if (hit && Math.abs(car.userData.speed) < 1.2) car.userData.speed = 0;
+}
+
+function triggerPlayerBuildingCrash(car, normal, incomingVelocity, impactSpeed) {
+  const data = car.userData;
+  data.destroyed = true;
+  data.driveDamage = 1;
+  data.limpMode = false;
+  data.speed = 0;
+  data.velocity.set(0, 0, 0);
+  data.angularVelocity = 0;
+  data.crashed = false;
+  data.immobilized = true;
+  data.braking = true;
+  data.hazard = true;
+  data.buildingCrashNormal = normal.clone();
+  const localNormal = normal.clone().applyQuaternion(car.quaternion.clone().invert());
+  data.cockpitImpact = {
+    direction: localNormal,
+    strength: THREE.MathUtils.clamp(impactSpeed / 22, 0.5, 1),
+    spin: 0,
+    startedAt: state.time,
+  };
+  spawnCollisionDamage(car, normal, incomingVelocity, impactSpeed);
+  playCrashSound(Math.min(1, impactSpeed / 20));
+  state.crashed = true;
+  state.playerCrashed = true;
+  restartBtn.hidden = false;
+  statusEl.textContent = "Car destroyed by building impact";
+  startBuildingCrashHelp();
 }
 
 function keepNearRoad(car) {
