@@ -105,6 +105,8 @@ const MAX_BOT_CARS = 200;
 const BOT_POPULATION_SPACING = 5.8;
 const SPAWN_BODY_MARGIN = 0.22;
 const BOT_BUMPER_GAP = 0.38;
+const PLAYER_FOLLOW_GAP = 4.5;
+const PLAYER_FOLLOW_TIME = 0.55;
 const ENGINE_AUDIO_RANGE = 48;
 const MAX_ENGINE_VOICES = 28;
 const ENGINE_VOLUME = 2.14;
@@ -3826,8 +3828,11 @@ function followingTargetSpeed(bot, frontTraffic) {
   if (!frontTraffic) return bot.userData.desiredSpeed;
   const forward = dirs[bot.userData.dir];
   const leadSpeed = Math.max(0, carVelocity(frontTraffic.car).dot(forward));
-  const usableGap = Math.max(0, frontTraffic.gap - BOT_BUMPER_GAP);
-  return THREE.MathUtils.clamp(leadSpeed + usableGap * 1.65, 0, bot.userData.desiredSpeed);
+  const followingGap = frontTraffic.car.userData.player
+    ? PLAYER_FOLLOW_GAP + Math.max(0, bot.userData.speed || 0) * PLAYER_FOLLOW_TIME
+    : BOT_BUMPER_GAP;
+  const gapError = frontTraffic.gap - followingGap;
+  return THREE.MathUtils.clamp(leadSpeed + gapError * 1.65, 0, bot.userData.desiredSpeed);
 }
 
 function intersectionApproachSpeed(bot) {
