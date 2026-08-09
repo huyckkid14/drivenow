@@ -44,6 +44,12 @@ const policeInteractionEl = document.querySelector("#policeInteraction");
 const driverResponseEl = document.querySelector("#driverResponse");
 const introOverlayEl = document.querySelector("#introOverlay");
 const startNowBtn = document.querySelector("#startNow");
+const settingsButtonEl = document.querySelector("#settingsButton");
+const settingsOverlayEl = document.querySelector("#settingsOverlay");
+const closeSettingsEl = document.querySelector("#closeSettings");
+const resumeGameEl = document.querySelector("#resumeGame");
+const qualitySettingEl = document.querySelector("#qualitySetting");
+const fpsReadingEl = document.querySelector("#fpsReading");
 
 const clock = new THREE.Clock();
 const keys = new Set();
@@ -168,6 +174,10 @@ const state = {
   botSensitivity: 0,
   trafficDensity: 1,
   trafficInitialized: false,
+  settingsOpen: false,
+  quality: "high",
+  fpsFrames: 0,
+  fpsElapsed: 0,
   onFoot: false,
   securityRoom: false,
   securitySelected: null,
@@ -245,11 +255,19 @@ function init() {
   hazardsBtn.addEventListener("click", toggleHazards);
   botSensitivityEl.addEventListener("input", updateBotSensitivity);
   trafficDensityEl.addEventListener("input", updateTrafficDensity);
+  settingsButtonEl.addEventListener("click", openSettings);
+  closeSettingsEl.addEventListener("click", closeSettings);
+  resumeGameEl.addEventListener("click", closeSettings);
+  settingsOverlayEl.addEventListener("click", (event) => {
+    if (event.target === settingsOverlayEl) closeSettings();
+  });
+  qualitySettingEl.addEventListener("change", applyQualitySetting);
   restartBtn.addEventListener("click", restartCity);
   policeInteractionEl.addEventListener("click", onPoliceInteractionClick);
   setupIntro();
   updateBotSensitivity();
   updateTrafficDensity();
+  applyQualitySetting();
   loadingEl.hidden = true;
 }
 
@@ -1325,9 +1343,15 @@ function createSkylineDetails() {
 
 function animate() {
   requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), 0.045);
+  const rawDelta = clock.getDelta();
+  const dt = Math.min(rawDelta, 0.045);
+  updateFpsReading(rawDelta);
   if (state.introActive) {
     updateCamera(dt);
+    renderer.render(scene, camera);
+    return;
+  }
+  if (state.settingsOpen) {
     renderer.render(scene, camera);
     return;
   }
@@ -1361,6 +1385,55 @@ function animate() {
   updateHud();
   if (state.securityRoom) renderSecurityFeeds();
   else renderDrivingScene();
+}
+
+function updateFpsReading(delta) {
+  state.fpsFrames += 1;
+  state.fpsElapsed += delta;
+  if (state.fpsElapsed < 0.5) return;
+  const fps = Math.round(state.fpsFrames / state.fpsElapsed);
+  fpsReadingEl.value = `${fps} FPS`;
+  fpsReadingEl.textContent = `${fps} FPS`;
+  state.fpsFrames = 0;
+  state.fpsElapsed = 0;
+}
+
+function openSettings() {
+  if (state.introActive) return;
+  state.settingsOpen = true;
+  settingsOverlayEl.hidden = false;
+  keys.clear();
+  state.toggleHeld.clear();
+  state.policeTriggerHeld = false;
+  stopPlayerHorn();
+  if (document.pointerLockElement === renderer.domElement) document.exitPointerLock?.();
+}
+
+function closeSettings() {
+  state.settingsOpen = false;
+  settingsOverlayEl.hidden = true;
+  clock.getDelta();
+  renderer.domElement.focus();
+}
+
+function applyQualitySetting() {
+  const quality = qualitySettingEl.value;
+  state.quality = quality;
+  const deviceRatio = window.devicePixelRatio || 1;
+  const pixelRatio = quality === "low" ? 1 : quality === "medium" ? Math.min(deviceRatio, 1.35) : Math.min(deviceRatio, 2);
+  renderer.setPixelRatio(pixelRatio);
+  renderer.shadowMap.enabled = quality !== "low";
+  renderer.shadowMap.autoUpdate = quality !== "low";
+  const mirrorWidth = quality === "low" ? 128 : quality === "medium" ? 192 : 256;
+  leftMirrorTarget.setSize(mirrorWidth, Math.round(mirrorWidth / 2));
+  rightMirrorTarget.setSize(mirrorWidth, Math.round(mirrorWidth / 2));
+  rearviewTarget.setSize(quality === "low" ? 180 : quality === "medium" ? 240 : 320, quality === "low" ? 58 : quality === "medium" ? 78 : 104);
+  backupCameraTarget.setSize(quality === "low" ? 256 : quality === "medium" ? 384 : 512, quality === "low" ? 128 : quality === "medium" ? 192 : 256);
+  for (const feed of securityCameras) {
+    const width = quality === "low" ? 160 : quality === "medium" ? 240 : 320;
+    feed.target.setSize(width, Math.round(width * 9 / 16));
+  }
+  onResize();
 }
 
 function renderDrivingScene() {
@@ -5521,6 +5594,13 @@ function updateReverseWarningDisplay(cockpit) {
 function onKeyDown(event) {
   const key = normalizeKey(event);
   if (!key) return;
+  if (state.settingsOpen) {
+    if (key === "escape") {
+      event.preventDefault();
+      closeSettings();
+    }
+    return;
+  }
   ensureAudio();
   keys.add(key);
   if (["arrowup", "arrowdown", "arrowleft", "arrowright", "space", "q", "e", "z", "c", "d", "h", "p", "o", "1"].includes(key)) {

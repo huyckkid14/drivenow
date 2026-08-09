@@ -203,7 +203,7 @@ body.security-view #hud {
 
 body.security-view #hud > .brand,
 body.security-view #hud > .controls,
-body.security-view #hud > .range-control,
+body.security-view #hud > .hud-settings,
 body.security-view #speed,
 body.security-view #signal {
   display: none;
@@ -239,6 +239,77 @@ body.security-view #status {
   background: #ffcc33;
   color: #171713;
 }
+
+.hud-settings {
+  min-height: 30px;
+  padding: 6px 11px;
+  border: 1px solid rgba(255, 220, 105, 0.45);
+  border-radius: 7px;
+  background: rgba(255, 204, 51, 0.14);
+  color: #ffdc69;
+  font: 800 12px/1 system-ui;
+  cursor: pointer;
+}
+
+.hud-settings:hover { background: rgba(255, 204, 51, 0.25); }
+
+#fpsReading {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 60;
+  min-width: 72px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255,255,255,.2);
+  border-radius: 8px;
+  background: rgba(8,13,12,.72);
+  color: #8ff0b4;
+  font: 850 12px/1 system-ui;
+  text-align: center;
+  backdrop-filter: blur(10px);
+}
+
+#settingsOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(3, 8, 9, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.settings-panel {
+  width: min(520px, calc(100vw - 32px));
+  padding: 22px;
+  border: 1px solid rgba(255,255,255,.24);
+  border-radius: 18px;
+  background: rgba(13, 25, 27, 0.97);
+  box-shadow: 0 28px 80px rgba(0,0,0,.55);
+}
+
+.settings-heading { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }
+.settings-heading span { color: #ffdc69; font-size: 11px; font-weight: 900; letter-spacing: .14em; }
+.settings-heading h2 { margin: 4px 0 0; font-size: 30px; }
+.settings-heading button { width: 38px; height: 38px; border: 1px solid rgba(255,255,255,.22); border-radius: 9px; background: rgba(255,255,255,.1); color: white; font-size: 25px; cursor: pointer; }
+
+.settings-row,
+.settings-range {
+  margin: 10px 0;
+  padding: 14px;
+  border-radius: 11px;
+  background: rgba(255,255,255,.07);
+}
+
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.settings-row span { display: grid; gap: 3px; }
+.settings-row small { color: #aabdb9; }
+.settings-row select { min-width: 128px; padding: 9px 10px; border: 1px solid rgba(255,255,255,.22); border-radius: 8px; background: #1e3031; color: white; font: 750 13px system-ui; }
+.settings-range { grid-template-columns: 120px minmax(130px, 1fr) 78px; }
+
+#resumeGame { width: 100%; margin-top: 12px; padding: 13px 18px; border: 0; border-radius: 10px; background: #ffcc33; color: #172019; font: 900 15px/1 system-ui; cursor: pointer; }
+#resumeGame:hover { background: #ffda61; }
 
 .range-control {
   display: grid;

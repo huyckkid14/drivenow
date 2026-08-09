@@ -13,7 +13,7 @@
         document.documentElement.dataset.intro = "new";
       }
     </script>
-    <link rel="stylesheet" href="./styles.css?v=5" />
+    <link rel="stylesheet" href="./styles.css?v=6" />
   </head>
   <body>
     <main id="introOverlay" aria-label="Welcome to DriveNow">
@@ -58,17 +58,36 @@
         <button id="rightSignal" type="button">E Right</button>
         <button id="hazards" type="button">Z Hazards</button>
       </div>
-      <label class="range-control" for="botSensitivity">
-        <span>Bot sensitivity</span>
-        <input id="botSensitivity" type="range" min="0" max="100" value="0" step="1" />
-        <output id="botSensitivityValue" for="botSensitivity">Original</output>
-      </label>
-      <label class="range-control" for="trafficDensity">
-        <span>Traffic</span>
-        <input id="trafficDensity" type="range" min="0" max="100" value="100" step="1" />
-        <output id="trafficDensityValue" for="trafficDensity">200 cars</output>
-      </label>
+      <button id="settingsButton" class="hud-settings" type="button">Settings</button>
     </div>
+    <output id="fpsReading" aria-live="off">-- FPS</output>
+    <section id="settingsOverlay" hidden aria-label="Game settings">
+      <div class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="settings-heading">
+          <div><span>GAME PAUSED</span><h2 id="settingsTitle">Settings</h2></div>
+          <button id="closeSettings" type="button" aria-label="Close settings">×</button>
+        </div>
+        <label class="settings-row" for="qualitySetting">
+          <span><strong>Graphics quality</strong><small>Lower quality improves performance</small></span>
+          <select id="qualitySetting">
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high" selected>High</option>
+          </select>
+        </label>
+        <label class="range-control settings-range" for="botSensitivity">
+          <span>Bot sensitivity</span>
+          <input id="botSensitivity" type="range" min="0" max="100" value="0" step="1" />
+          <output id="botSensitivityValue" for="botSensitivity">Original</output>
+        </label>
+        <label class="range-control settings-range" for="trafficDensity">
+          <span>Traffic</span>
+          <input id="trafficDensity" type="range" min="0" max="100" value="100" step="1" />
+          <output id="trafficDensityValue" for="trafficDensity">500 cars</output>
+        </label>
+        <button id="resumeGame" type="button">Resume game</button>
+      </div>
+    </section>
     <button id="restart" type="button" hidden>Restart city</button>
     <div id="loading">Loading city...</div>
     <div id="aimVignette" aria-hidden="true" hidden></div>
@@ -89,6 +108,6 @@
         }
       }
     </script>
-    <script type="module" src="./src/main.js?v=222"></script>
+    <script type="module" src="./src/main.js?v=223"></script>
   </body>
 </html>
