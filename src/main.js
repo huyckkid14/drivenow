@@ -152,6 +152,8 @@ const state = {
   introActive: document.documentElement.dataset.intro === "new",
   cameraView: 2,
   backupCameraActive: false,
+  reverseCrossTrafficDirection: null,
+  lastReverseCrossTrafficBeep: -10,
   gear: "drive",
   gearDragging: false,
   gearDragStartY: 0,
@@ -701,6 +703,19 @@ function createCockpitInterior(car) {
   display.position.set(-0.08, 1.23, 0.355);
   display.rotation.y = Math.PI;
 
+  const reverseWarningCanvas = document.createElement("canvas");
+  reverseWarningCanvas.width = 512;
+  reverseWarningCanvas.height = 256;
+  const reverseWarningTexture = new THREE.CanvasTexture(reverseWarningCanvas);
+  reverseWarningTexture.colorSpace = THREE.SRGBColorSpace;
+  const reverseWarning = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.64, 0.3),
+    new THREE.MeshBasicMaterial({ map: reverseWarningTexture, transparent: true, depthTest: false, side: THREE.DoubleSide }),
+  );
+  reverseWarning.position.set(-0.08, 1.23, 0.349);
+  reverseWarning.rotation.y = Math.PI;
+  reverseWarning.renderOrder = 20;
+
   const clusterCanvas = document.createElement("canvas");
   clusterCanvas.width = 384;
   clusterCanvas.height = 192;
@@ -811,11 +826,14 @@ function createCockpitInterior(car) {
   const rearviewStem = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.12, 0.06), trim);
   rearviewStem.position.set(0, 2.11, 0.5);
 
-  cockpit.add(dashboard, roof, windshield, wheel, wheelHub, display, cluster, infotainment, shifter,
+  cockpit.add(dashboard, roof, windshield, wheel, wheelHub, display, reverseWarning, cluster, infotainment, shifter,
     rearviewHousing, rearviewMirror, rearviewStem);
   cockpit.userData.displayCanvas = displayCanvas;
   cockpit.userData.displayTexture = displayTexture;
   cockpit.userData.displayMaterial = displayMaterial;
+  cockpit.userData.reverseWarningCanvas = reverseWarningCanvas;
+  cockpit.userData.reverseWarningTexture = reverseWarningTexture;
+  cockpit.userData.reverseWarning = reverseWarning;
   cockpit.userData.clusterCanvas = clusterCanvas;
   cockpit.userData.clusterTexture = clusterTexture;
   cockpit.userData.shifterLever = shifterLever;
@@ -1238,6 +1256,7 @@ function animate() {
   updateCarDoor(dt);
   updateCrashMeeting(dt);
   updateBots(dt);
+  updateReverseCrossTrafficWarning();
   updatePoliceMode(dt);
   updateEngineSounds(dt);
   updateTrafficSpawns();
@@ -3835,6 +3854,44 @@ function followingTargetSpeed(bot, frontTraffic) {
   return THREE.MathUtils.clamp(leadSpeed + gapError * 1.65, 0, bot.userData.desiredSpeed);
 }
 
+function updateReverseCrossTrafficWarning() {
+  state.reverseCrossTrafficDirection = null;
+  if (state.gear !== "reverse" || state.onFoot || state.playerCrashed) return;
+
+  const player = state.player;
+  const playerForward = getForward(player).normalize();
+  const playerRear = playerForward.clone().multiplyScalar(-1);
+  const playerRight = new THREE.Vector3(playerForward.z, 0, -playerForward.x);
+  const playerVelocity = player.userData.velocity || new THREE.Vector3();
+  let nearestArrival = Infinity;
+
+  for (const car of collidableCars) {
+    if (car === player || !car.visible || car.userData.waitingForEntry || car.userData.immobilized || car.userData.crashed) continue;
+    const delta = car.position.clone().sub(player.position);
+    const lateral = delta.dot(playerRight);
+    const rearward = delta.dot(playerRear);
+    if (Math.abs(lateral) < 2.8 || Math.abs(lateral) > 25 || rearward < -4 || rearward > 18) continue;
+
+    const relativeVelocity = carVelocity(car).sub(playerVelocity);
+    const lateralSpeed = relativeVelocity.dot(playerRight);
+    if (lateral * lateralSpeed >= -0.2 || Math.abs(lateralSpeed) < 1.6) continue;
+    const arrival = -lateral / lateralSpeed;
+    if (arrival < 0 || arrival > 3) continue;
+    const predictedRearward = rearward + relativeVelocity.dot(playerRear) * arrival;
+    if (predictedRearward < -3 || predictedRearward > 12) continue;
+
+    if (arrival < nearestArrival) {
+      nearestArrival = arrival;
+      state.reverseCrossTrafficDirection = lateralSpeed > 0 ? "right" : "left";
+    }
+  }
+
+  if (state.reverseCrossTrafficDirection && state.time - state.lastReverseCrossTrafficBeep >= 1.35) {
+    state.lastReverseCrossTrafficBeep = state.time;
+    playReverseCrossTrafficBeep();
+  }
+}
+
 function intersectionApproachSpeed(bot) {
   const data = bot.userData;
   const forward = dirs[data.dir];
@@ -5106,6 +5163,7 @@ function updateHud() {
     const blinkOn = Math.sin((data.blink || 0) * Math.PI) > 0;
     const hazardsOn = state.hazard || data.hazard;
     updateCockpitDisplay(speed, rpm, blinkOn && (hazardsOn || state.signal === "left"), blinkOn && (hazardsOn || state.signal === "right"));
+    updateReverseWarningDisplay(cockpit);
   }
   speedEl.textContent = `${speed} mph`;
   if (state.hazard || state.player.userData.hazard) signalEl.textContent = "Hazards";
@@ -5287,6 +5345,32 @@ function updateCockpitDisplay(speed, rpm, leftActive = false, rightActive = fals
   const gearZ = state.gearDragging ? state.gearDragZ : state.gear === "reverse" ? -0.16 : 0.16;
   cockpit.userData.shifterLever.position.z = gearZ;
   cockpit.userData.shifterLever.rotation.x = gearZ * 0.7;
+}
+
+function updateReverseWarningDisplay(cockpit) {
+  const canvas = cockpit.userData.reverseWarningCanvas;
+  const context = canvas.getContext("2d");
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  const direction = state.reverseCrossTrafficDirection;
+  cockpit.userData.reverseWarning.visible = state.backupCameraActive && Boolean(direction);
+  if (!direction) {
+    cockpit.userData.reverseWarningTexture.needsUpdate = true;
+    return;
+  }
+
+  const warningRight = direction === "right";
+  const warningPulse = Math.sin(state.time * 18) > -0.25;
+  context.fillStyle = warningPulse ? "rgba(220, 20, 20, 0.92)" : "rgba(105, 8, 8, 0.8)";
+  context.beginPath();
+  context.roundRect(120, 38, 272, 180, 24);
+  context.fill();
+  context.fillStyle = "#ffffff";
+  context.font = "bold 112px system-ui";
+  context.textAlign = "center";
+  context.fillText(warningRight ? "▶" : "◀", 256, 154);
+  context.font = "bold 24px system-ui";
+  context.fillText("CROSS TRAFFIC", 256, 198);
+  cockpit.userData.reverseWarningTexture.needsUpdate = true;
 }
 
 function onKeyDown(event) {
@@ -5699,6 +5783,28 @@ function playCrashSound(force = 0.7) {
   thud.stop(now + 0.25);
 }
 
+function playReverseCrossTrafficBeep() {
+  const audio = ensureAudio();
+  if (!audio) return;
+  if (audio.state === "suspended") audio.resume();
+  const now = audio.currentTime;
+  for (const [index, offset] of [0, 0.19, 0.55, 0.74].entries()) {
+    const oscillator = audio.createOscillator();
+    const gain = audio.createGain();
+    const start = now + offset;
+    const end = start + 0.13;
+    oscillator.type = "square";
+    oscillator.frequency.setValueAtTime(index % 2 === 0 ? 920 : 780, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.28, start + 0.012);
+    gain.gain.setValueAtTime(0.28, end - 0.025);
+    gain.gain.exponentialRampToValueAtTime(0.0001, end);
+    oscillator.connect(gain).connect(audio.destination);
+    oscillator.start(start);
+    oscillator.stop(end + 0.01);
+  }
+}
+
 function playHonkSound(kind = "short") {
   const audio = ensureAudio();
   if (!audio) return;
@@ -5851,6 +5957,8 @@ function restartCity() {
   state.securityFeedCursor = 0;
   state.cameraView = 2;
   state.backupCameraActive = false;
+  state.reverseCrossTrafficDirection = null;
+  state.lastReverseCrossTrafficBeep = -10;
   state.gear = "drive";
   state.gearDragging = false;
   state.gearDragZ = 0.16;
