@@ -154,6 +154,9 @@ const state = {
   backupCameraActive: false,
   reverseCrossTrafficDirection: null,
   lastReverseCrossTrafficBeep: -10,
+  blindSpotLeft: false,
+  blindSpotRight: false,
+  lastBlindSpotBeep: -10,
   gear: "drive",
   gearDragging: false,
   gearDragStartY: 0,
@@ -803,16 +806,43 @@ function createCockpitInterior(car) {
 
   const mirrorMaterialLeft = new THREE.MeshBasicMaterial({ map: leftMirrorTarget.texture, side: THREE.DoubleSide });
   const mirrorMaterialRight = new THREE.MeshBasicMaterial({ map: rightMirrorTarget.texture, side: THREE.DoubleSide });
+  const blindSpotIcons = {};
   for (const spec of [
-    { x: 1.34, material: mirrorMaterialLeft },
-    { x: -1.05, material: mirrorMaterialRight },
+    { side: "left", x: 1.34, material: mirrorMaterialLeft },
+    { side: "right", x: -1.05, material: mirrorMaterialRight },
   ]) {
     const housing = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.34, 0.12), trim);
     housing.position.set(spec.x, 1.36, 0.68);
     const mirror = new THREE.Mesh(new THREE.PlaneGeometry(0.53, 0.26), spec.material);
     mirror.position.set(spec.x, 1.36, 0.61);
     mirror.rotation.y = Math.PI;
-    cockpit.add(housing, mirror);
+    const warningIcon = new THREE.Group();
+    const warningShape = new THREE.Shape();
+    warningShape.moveTo(0, 0.055);
+    warningShape.lineTo(-0.052, -0.038);
+    warningShape.lineTo(0.052, -0.038);
+    warningShape.closePath();
+    const warningTriangle = new THREE.Mesh(
+      new THREE.ShapeGeometry(warningShape),
+      new THREE.MeshBasicMaterial({ color: 0xffa51f, transparent: true, opacity: 0.95, depthTest: false, side: THREE.DoubleSide }),
+    );
+    const warningBar = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.009, 0.038),
+      new THREE.MeshBasicMaterial({ color: 0x1b1000, depthTest: false, side: THREE.DoubleSide }),
+    );
+    warningBar.position.set(0, 0.004, 0.002);
+    const warningDot = new THREE.Mesh(
+      new THREE.CircleGeometry(0.006, 12),
+      new THREE.MeshBasicMaterial({ color: 0x1b1000, depthTest: false, side: THREE.DoubleSide }),
+    );
+    warningDot.position.set(0, -0.023, 0.002);
+    warningIcon.add(warningTriangle, warningBar, warningDot);
+    warningIcon.position.set(spec.x + Math.sign(spec.x) * 0.17, 1.4, 0.59);
+    warningIcon.rotation.y = Math.PI;
+    warningIcon.renderOrder = 25;
+    warningIcon.visible = false;
+    blindSpotIcons[spec.side] = warningIcon;
+    cockpit.add(housing, mirror, warningIcon);
   }
 
   const rearviewHousing = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.16, 0.1), trim);
@@ -838,6 +868,7 @@ function createCockpitInterior(car) {
   cockpit.userData.clusterTexture = clusterTexture;
   cockpit.userData.shifterLever = shifterLever;
   cockpit.userData.backupGuides = backupGuides;
+  cockpit.userData.blindSpotIcons = blindSpotIcons;
   car.add(cockpit);
   car.userData.cockpit = cockpit;
   updateCockpitDisplay(0, 900);
@@ -1257,6 +1288,7 @@ function animate() {
   updateCrashMeeting(dt);
   updateBots(dt);
   updateReverseCrossTrafficWarning();
+  updateBlindSpotWarnings();
   updatePoliceMode(dt);
   updateEngineSounds(dt);
   updateTrafficSpawns();
@@ -3892,6 +3924,52 @@ function updateReverseCrossTrafficWarning() {
   }
 }
 
+function updateBlindSpotWarnings() {
+  state.blindSpotLeft = false;
+  state.blindSpotRight = false;
+  const player = state.player;
+  const cockpit = player?.userData?.cockpit;
+  if (!player || state.onFoot || state.playerCrashed) {
+    if (cockpit?.userData.blindSpotIcons) {
+      cockpit.userData.blindSpotIcons.left.visible = false;
+      cockpit.userData.blindSpotIcons.right.visible = false;
+    }
+    return;
+  }
+
+  const forward = getForward(player).normalize();
+  const right = new THREE.Vector3(forward.z, 0, -forward.x);
+  for (const car of collidableCars) {
+    if (car === player || !car.visible || car.userData.waitingForEntry || car.userData.immobilized || car.userData.crashed) continue;
+    const delta = car.position.clone().sub(player.position);
+    const longitudinal = delta.dot(forward);
+    const lateral = delta.dot(right);
+    if (longitudinal < -7.5 || longitudinal > 1.5) continue;
+    if (Math.abs(lateral) < 2.15 || Math.abs(lateral) > 7.2) continue;
+    if (lateral < 0) state.blindSpotRight = true;
+    else state.blindSpotLeft = true;
+  }
+
+  if (cockpit?.userData.blindSpotIcons) {
+    const pulse = 1 + Math.max(0, Math.sin(state.time * 7)) * 0.08;
+    cockpit.userData.blindSpotIcons.left.visible = state.blindSpotLeft;
+    cockpit.userData.blindSpotIcons.right.visible = state.blindSpotRight;
+    cockpit.userData.blindSpotIcons.left.scale.setScalar(pulse);
+    cockpit.userData.blindSpotIcons.right.scale.setScalar(pulse);
+  }
+
+  const signalingIntoOccupiedSide =
+    (state.signal === "left" && state.blindSpotLeft) ||
+    (state.signal === "right" && state.blindSpotRight);
+  if (signalingIntoOccupiedSide) requestBlindSpotBeep();
+}
+
+function requestBlindSpotBeep() {
+  if (state.time - state.lastBlindSpotBeep < 1.35) return;
+  state.lastBlindSpotBeep = state.time;
+  playReverseCrossTrafficBeep();
+}
+
 function intersectionApproachSpeed(bot) {
   const data = bot.userData;
   const forward = dirs[data.dir];
@@ -5616,6 +5694,9 @@ function normalizeKey(event) {
 function toggleSignal(direction) {
   state.signal = state.signal === direction ? "off" : direction;
   state.hazard = false;
+  ensureAudio();
+  const occupied = direction === "left" ? state.blindSpotLeft : state.blindSpotRight;
+  if (state.signal === direction && occupied) requestBlindSpotBeep();
   renderer.domElement.focus();
 }
 
@@ -5959,6 +6040,9 @@ function restartCity() {
   state.backupCameraActive = false;
   state.reverseCrossTrafficDirection = null;
   state.lastReverseCrossTrafficBeep = -10;
+  state.blindSpotLeft = false;
+  state.blindSpotRight = false;
+  state.lastBlindSpotBeep = -10;
   state.gear = "drive";
   state.gearDragging = false;
   state.gearDragZ = 0.16;
