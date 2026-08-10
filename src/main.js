@@ -3870,6 +3870,15 @@ function stopInfoForSignal(bot) {
   const axis = data.dir === "east" || data.dir === "west" ? "ew" : "ns";
   const ix = nearestGrid(bot.position.x);
   const iz = nearestGrid(bot.position.z);
+  if (data.signalCommit) {
+    const commit = data.signalCommit;
+    const clearMargin = ROAD_HALF + CAR_HALF_LENGTH + 1;
+    const stillClearingCommittedIntersection =
+      Math.abs(bot.position.x - commit.ix) <= clearMargin &&
+      Math.abs(bot.position.z - commit.iz) <= clearMargin;
+    if (stillClearingCommittedIntersection) return null;
+    data.signalCommit = null;
+  }
   const stopCenter = stopCenterForDirection(ix, iz, data.dir, data.laneIndex || 0);
   const toStop = stopCenter.clone().sub(bot.position);
   const ahead = toStop.dot(forward);
@@ -3881,6 +3890,14 @@ function stopInfoForSignal(bot) {
   if (!laneAligned) return null;
   const light = trafficLights.find((item) => item.x === ix && item.z === iz && item.axis === axis);
   if (!light || light.state === "green") return null;
+  if (light.state === "yellow") {
+    const speed = Math.abs(data.speed || 0);
+    const safeStoppingDistance = speed * speed / (2 * 26) + 1.4;
+    if (ahead <= Math.max(0.7, safeStoppingDistance)) {
+      data.signalCommit = { ix, iz };
+      return null;
+    }
+  }
   return { stopCenter, forward, ahead, clearingIntersection: ahead < -0.1 };
 }
 
