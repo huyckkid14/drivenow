@@ -1209,6 +1209,8 @@ function spawnBot(start) {
     maxSpeed: 20,
     dir: start.dir,
     laneIndex: start.laneIndex || 0,
+    nextLaneChangeAt: state.time + 5 + Math.random() * 10,
+    laneChange: null,
     turnMemory: state.time,
     immobilized: false,
     hazard: false,
@@ -3213,6 +3215,16 @@ function updateBots(dt) {
         : signalStop
         ? Math.min(followingSpeed, redApproachSpeed)
         : boxStop ? 0 : cruisingSpeed;
+    const clearLaneChange = data.laneChange &&
+      !avoidance &&
+      !intersectionBlocked &&
+      (!frontTraffic || frontTraffic.gap > 12);
+    if (clearLaneChange) {
+      // Changing lanes is not a braking event. Preserve momentum when both the
+      // maneuver and the road ahead are clear; genuine traffic and signal
+      // stops above still take priority.
+      targetSpeed = Math.max(targetSpeed, data.speed || 0, data.desiredSpeed * 0.85);
+    }
     const safelyTailgated = !avoidance &&
       !intersectionBlocked &&
       (!frontTraffic || frontTraffic.gap > 7) &&
@@ -3225,12 +3237,16 @@ function updateBots(dt) {
     data.braking = targetSpeed < data.speed - 0.5;
     data.speed = moveToward(data.speed, targetSpeed, rate * dt);
 
-    if (!avoidance) maybeTurnAtIntersection(bot);
+    updateBotLaneChange(bot, avoidance, intersectionStop);
+    if (!avoidance && !data.laneChange) maybeTurnAtIntersection(bot);
     const forward = dirs[data.dir];
     const previous = bot.position.clone();
-    const travel = avoidance ? avoidance.direction : forward;
+    const travel = avoidance ? avoidance.direction : botLaneChangeDirection(bot, forward);
     const reversing = travel.dot(forward) < -0.5;
-    const facing = reversing ? forward : travel;
+    // A blocked lane change may reduce speed to zero before it can finish.
+    // Keep a stopped car parallel with traffic instead of leaving it diagonally
+    // across both lanes; it can steer back into the maneuver once moving again.
+    const facing = reversing || Math.abs(data.speed) < 0.15 ? forward : travel;
     const targetYaw = Math.atan2(facing.x, facing.z);
     bot.rotation.y = lerpAngle(bot.rotation.y, targetYaw, dt * (avoidance ? 10 : 7));
     const travelSpeed = reversing ? Math.min(Math.abs(data.speed), avoidance.speed) : Math.abs(data.speed);
@@ -3252,6 +3268,94 @@ function updateBots(dt) {
     if (avoidance) resolveBuildingCollisions(bot, previous);
     wrapBot(bot);
   }
+}
+
+function updateBotLaneChange(bot, avoidance, intersectionStop) {
+  const data = bot.userData;
+  if (data.laneChange) {
+    const change = data.laneChange;
+    if (change.phase === "signaling") {
+      if (avoidance || intersectionStop || !isBotLaneChangeClear(bot, change.targetLane, dirs[data.dir])) {
+        data.laneChange = null;
+        data.nextLaneChangeAt = state.time + 4 + Math.random() * 6;
+        return;
+      }
+      if (state.time - change.startedAt < 0.85) return;
+      change.phase = "moving";
+    }
+    const targetCoordinate = botLaneCoordinate(data.dir, data.laneChange.targetLane, bot.position);
+    const currentCoordinate = data.dir === "east" || data.dir === "west" ? bot.position.z : bot.position.x;
+    if (Math.abs(currentCoordinate - targetCoordinate) < 0.1) {
+      if (data.dir === "east" || data.dir === "west") bot.position.z = targetCoordinate;
+      else bot.position.x = targetCoordinate;
+      data.laneIndex = data.laneChange.targetLane;
+      data.laneChange = null;
+      data.nextLaneChangeAt = state.time + 7 + Math.random() * 12;
+    }
+    return;
+  }
+  if (avoidance || intersectionStop || state.time < (data.nextLaneChangeAt || 0) || Math.abs(data.speed || 0) < 5) return;
+  const forward = dirs[data.dir];
+  const alongCoordinate = data.dir === "east" || data.dir === "west" ? bot.position.x : bot.position.z;
+  const intersectionDistance = Math.min(...GRID.map((value) => Math.abs(alongCoordinate - value)));
+  if (intersectionDistance < ROAD_HALF + CAR_HALF_LENGTH + 5) return;
+  const targetLane = (data.laneIndex || 0) === 0 ? 1 : 0;
+  data.nextLaneChangeAt = state.time + 6 + Math.random() * 10;
+  if (!isBotLaneChangeClear(bot, targetLane, forward)) return;
+  data.laneChange = {
+    targetLane,
+    originalLane: data.laneIndex || 0,
+    phase: "signaling",
+    startedAt: state.time,
+    signal: botLaneChangeSignal(bot, targetLane),
+  };
+}
+
+function botLaneCoordinate(dir, laneIndex, position) {
+  const fixed = nearestGrid(dir === "east" || dir === "west" ? position.z : position.x);
+  return fixed + laneOffsetForDirection(dir, laneIndex);
+}
+
+function botLaneChangeDirection(bot, forward) {
+  const change = bot.userData.laneChange;
+  if (!change || change.phase === "signaling") return forward;
+  const target = bot.position.clone().addScaledVector(forward, 13);
+  const coordinate = botLaneCoordinate(bot.userData.dir, change.targetLane, bot.position);
+  if (bot.userData.dir === "east" || bot.userData.dir === "west") target.z = coordinate;
+  else target.x = coordinate;
+  return target.sub(bot.position).normalize();
+}
+
+function isBotLaneChangeClear(bot, targetLane, forward) {
+  const targetCoordinate = botLaneCoordinate(bot.userData.dir, targetLane, bot.position);
+  for (const other of collidableCars) {
+    if (other === bot || !other.visible || other.userData.waitingForEntry) continue;
+    const otherChange = other.userData.laneChange;
+    const along = other.position.clone().sub(bot.position).dot(forward);
+    if (
+      otherChange &&
+      other.userData.dir === bot.userData.dir &&
+      otherChange.targetLane === (bot.userData.laneIndex || 0) &&
+      otherChange.originalLane === targetLane &&
+      Math.abs(along) < 30
+    ) return false;
+    const otherCoordinate = bot.userData.dir === "east" || bot.userData.dir === "west" ? other.position.z : other.position.x;
+    if (Math.abs(otherCoordinate - targetCoordinate) > CAR_HALF_WIDTH * 2 + 0.45) continue;
+    if (along > -16 && along < 26) return false;
+  }
+  return true;
+}
+
+function botLaneChangeSignal(bot, targetLane) {
+  const forward = dirs[bot.userData.dir];
+  // In the car model local +X is the driver's left side.
+  const left = new THREE.Vector3(forward.z, 0, -forward.x);
+  const currentCoordinate = bot.userData.dir === "east" || bot.userData.dir === "west" ? bot.position.z : bot.position.x;
+  const targetCoordinate = botLaneCoordinate(bot.userData.dir, targetLane, bot.position);
+  const lateral = bot.userData.dir === "east" || bot.userData.dir === "west"
+    ? new THREE.Vector3(0, 0, targetCoordinate - currentCoordinate)
+    : new THREE.Vector3(targetCoordinate - currentCoordinate, 0, 0);
+  return lateral.dot(left) >= 0 ? "left" : "right";
 }
 
 function getPlayerReverseYield(bot) {
@@ -5369,8 +5473,9 @@ function updateSignals(dt) {
     data.blink += dt * 3.2;
     const on = Math.sin(data.blink * Math.PI) > 0;
     const useHazard = data.hazard || (data.player && state.hazard);
-    const left = useHazard || (data.player && state.signal === "left");
-    const right = useHazard || (data.player && state.signal === "right");
+    const botSignal = !data.player ? data.laneChange?.signal : null;
+    const left = useHazard || (data.player ? state.signal === "left" : botSignal === "left");
+    const right = useHazard || (data.player ? state.signal === "right" : botSignal === "right");
     setSignalLamps(data.indicators, left && on, right && on);
     setBrakeLights(data.brakeLights, data.braking || data.immobilized);
   }
