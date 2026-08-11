@@ -62,6 +62,11 @@ const damagePieces = [];
 const weaponEffects = [];
 const grenades = [];
 const rockets = [];
+const solarFireballs = [];
+const solarFires = [];
+const solarImpactEmbers = [];
+const solarScorches = [];
+const solarFlameTextures = [];
 const exhaustSmoke = [];
 const npcPedestrians = [];
 const crashResponders = [];
@@ -199,6 +204,8 @@ const state = {
   fpsElapsed: 0,
   skyTime: DAY_DURATION * 0.25,
   daylight: 1,
+  sunDestroyed: false,
+  nextSolarFireballAt: Infinity,
   botHeadlightsOn: false,
   playerHeadlights: false,
   streetLightsOn: false,
@@ -1490,6 +1497,28 @@ function createSkyCycleObjects() {
 
 function updateDayNightCycle(dt) {
   state.skyTime = (state.skyTime + dt) % SKY_CYCLE_DURATION;
+  if (state.sunDestroyed) {
+    state.daylight = 0;
+    scene.background.copy(NIGHT_SKY);
+    scene.fog.color.copy(NIGHT_SKY);
+    sunDisk.visible = false;
+    sunLight.intensity = 0;
+    moonDisk.position.set(-190, 210, 205);
+    moonLight.position.copy(moonDisk.position).multiplyScalar(0.35);
+    moonLight.intensity = 0.34;
+    hemisphereLight.intensity = 0.2;
+    hemisphereLight.color.set(0x819bd2);
+    starField.material.opacity = 1;
+    starField.rotation.y += dt * 0.004;
+    moonDisk.material.opacity = 1;
+    if (!state.botHeadlightsOn) {
+      state.botHeadlightsOn = true;
+      updateVehicleHeadlights(true);
+    }
+    updateStreetLights(true);
+    updateBotHeadlightPool(true);
+    return;
+  }
   const daytime = state.skyTime < DAY_DURATION;
   const phase = daytime
     ? state.skyTime / DAY_DURATION
@@ -1697,6 +1726,7 @@ function animate() {
   updateWeaponEffects(dt);
   updateGrenades(dt);
   updateRockets(dt);
+  updateSolarFireballs(dt);
   updateExhaustSmoke(dt);
   updatePlayer(dt);
   updatePedestrian(dt);
@@ -2473,6 +2503,7 @@ function firePolicePistol(automatic = false) {
   playPoliceShotSound();
 
   policeRaycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+  const sunHit = canHitSun() ? policeRaycaster.intersectObject(sunDisk, false)[0] : null;
   const hits = policeRaycaster.intersectObjects(city.children, true);
   let target = null;
   let surfaceHit = null;
@@ -2485,6 +2516,11 @@ function firePolicePistol(automatic = false) {
     while (car.parent && !cars.includes(car)) car = car.parent;
     if (cars.includes(car) && !car.userData.player && car.visible && !car.userData.waitingForEntry) target = car;
     break;
+  }
+  if (sunHit && (!surfaceHit || sunHit.distance < surfaceHit.distance)) {
+    createPoliceShotTracer(sunHit.point);
+    destroySun();
+    return;
   }
   createPoliceShotTracer(hitPoint);
   if (surfaceHit) createBulletHole(surfaceHit);
@@ -2811,6 +2847,367 @@ function createVehicleExplosion(origin) {
   }
 }
 
+function destroySun() {
+  if (state.sunDestroyed) return;
+  const origin = sunDisk.getWorldPosition(new THREE.Vector3());
+  state.sunDestroyed = true;
+  state.nextSolarFireballAt = state.time + 0.3;
+  sunDisk.visible = false;
+  const burst = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 28, 20),
+    new THREE.MeshBasicMaterial({ color: 0xff7a18, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }),
+  );
+  burst.position.copy(origin);
+  city.add(burst);
+  weaponEffects.push({ mesh: burst, bornAt: state.time, duration: 2.8, kind: "sunBurst" });
+  const core = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 24, 18),
+    new THREE.MeshBasicMaterial({ color: 0xfff2a1, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }),
+  );
+  core.position.copy(origin);
+  city.add(core);
+  weaponEffects.push({ mesh: core, bornAt: state.time, duration: 1.8, kind: "sunCore" });
+  for (let i = 0; i < 28; i++) {
+    const fragment = new THREE.Mesh(
+      new THREE.SphereGeometry(0.5 + Math.random() * 0.8, 8, 6),
+      new THREE.MeshBasicMaterial({ color: i % 2 ? 0xffaa22 : 0xffe37a, transparent: true, opacity: 1 }),
+    );
+    fragment.position.copy(origin);
+    const velocity = new THREE.Vector3(
+      THREE.MathUtils.randFloatSpread(55),
+      THREE.MathUtils.randFloatSpread(55),
+      THREE.MathUtils.randFloatSpread(55),
+    );
+    city.add(fragment);
+    weaponEffects.push({ mesh: fragment, bornAt: state.time, duration: 2.2 + Math.random(), kind: "sunFragment", velocity });
+  }
+  playExplosionSound();
+  updateDayNightCycle(0);
+  statusEl.textContent = "The sun exploded — permanent night · fireballs incoming";
+}
+
+function getSolarFlameTexture(index) {
+  const variant = index % 4;
+  if (solarFlameTextures[variant]) return solarFlameTextures[variant];
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 256;
+  const context = canvas.getContext("2d");
+  const offset = (variant - 1.5) * 7;
+  const outer = context.createLinearGradient(0, 250, 0, 8);
+  outer.addColorStop(0, "rgba(255,45,5,0)");
+  outer.addColorStop(0.08, "rgba(255,65,8,0.92)");
+  outer.addColorStop(0.45, "rgba(255,132,12,0.8)");
+  outer.addColorStop(0.78, "rgba(255,90,6,0.38)");
+  outer.addColorStop(1, "rgba(255,45,0,0)");
+  context.fillStyle = outer;
+  context.beginPath();
+  context.moveTo(13, 248);
+  context.bezierCurveTo(4, 192, 34 + offset, 166, 28 + offset, 112);
+  context.bezierCurveTo(24 + offset, 74, 60 + offset, 58, 65 + offset, 10);
+  context.bezierCurveTo(91 + offset, 69, 103 - offset, 101, 91 - offset, 139);
+  context.bezierCurveTo(119, 178, 124, 220, 115, 248);
+  context.closePath();
+  context.fill();
+  const inner = context.createLinearGradient(0, 236, 0, 72);
+  inner.addColorStop(0, "rgba(255,255,190,0)");
+  inner.addColorStop(0.16, "rgba(255,246,150,0.95)");
+  inner.addColorStop(0.62, "rgba(255,183,45,0.7)");
+  inner.addColorStop(1, "rgba(255,120,10,0)");
+  context.fillStyle = inner;
+  context.beginPath();
+  context.moveTo(38, 238);
+  context.bezierCurveTo(28, 192, 54 - offset, 164, 56 + offset, 91);
+  context.bezierCurveTo(79 + offset, 132, 96, 183, 88, 238);
+  context.closePath();
+  context.fill();
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  solarFlameTextures[variant] = texture;
+  return texture;
+}
+
+function spawnSolarFireball() {
+  const radius = THREE.MathUtils.randFloat(0.8, 1.65);
+  const fireball = new THREE.Group();
+  const core = new THREE.Mesh(
+    new THREE.DodecahedronGeometry(radius * 0.62, 1),
+    new THREE.MeshStandardMaterial({ color: 0x38130a, emissive: 0xff5217, emissiveIntensity: 3.8, roughness: 0.92 }),
+  );
+  fireball.add(core);
+  const flames = [];
+  for (let i = 0; i < 9; i++) {
+    const length = radius * THREE.MathUtils.randFloat(2.3, 6.8);
+    const width = radius * THREE.MathUtils.randFloat(0.75, 1.65);
+    const flame = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: getSolarFlameTexture(i),
+        color: 0xffffff,
+        transparent: true,
+        opacity: THREE.MathUtils.randFloat(0.5, 0.92),
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    const baseX = THREE.MathUtils.randFloatSpread(radius * 0.75);
+    const baseZ = THREE.MathUtils.randFloatSpread(radius * 0.75);
+    flame.position.set(baseX, radius * 0.15 + length / 2, baseZ);
+    flame.userData.baseX = baseX;
+    flame.userData.baseZ = baseZ;
+    flame.userData.baseY = flame.position.y;
+    flame.userData.phase = Math.random() * Math.PI * 2;
+    flame.userData.baseOpacity = flame.material.opacity;
+    flame.userData.baseWidth = width;
+    flame.userData.baseHeight = length;
+    flame.scale.set(width, length, 1);
+    flames.push(flame);
+    fireball.add(flame);
+  }
+  fireball.position.set(
+    THREE.MathUtils.randFloatSpread(BOUNDS * 1.8),
+    THREE.MathUtils.randFloat(75, 115),
+    THREE.MathUtils.randFloatSpread(BOUNDS * 1.8),
+  );
+  city.add(fireball);
+  solarFireballs.push({
+    mesh: fireball,
+    radius,
+    core,
+    flames,
+    velocity: new THREE.Vector3(THREE.MathUtils.randFloatSpread(5), -THREE.MathUtils.randFloat(24, 34), THREE.MathUtils.randFloatSpread(5)),
+  });
+}
+
+function updateSolarFireballs(dt) {
+  if (!state.sunDestroyed) return;
+  if (state.time >= state.nextSolarFireballAt && solarFireballs.length < 16) {
+    spawnSolarFireball();
+    state.nextSolarFireballAt = state.time + THREE.MathUtils.randFloat(0.28, 0.62);
+  }
+  for (let i = solarFireballs.length - 1; i >= 0; i--) {
+    const fireball = solarFireballs[i];
+    fireball.mesh.position.addScaledVector(fireball.velocity, dt);
+    const trailDirection = fireball.velocity.clone().normalize().negate();
+    fireball.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), trailDirection);
+    fireball.core.rotation.x += dt * 3.4;
+    fireball.core.rotation.z += dt * 2.7;
+    for (const flame of fireball.flames) {
+      const flicker = Math.sin(state.time * 15 + flame.userData.phase);
+      flame.scale.x = flame.userData.baseWidth * (0.82 + flicker * 0.16);
+      flame.scale.y = flame.userData.baseHeight * (0.9 + flicker * 0.22);
+      flame.scale.z = 1;
+      flame.position.x = flame.userData.baseX + Math.sin(state.time * 10 + flame.userData.phase) * fireball.radius * 0.16;
+      flame.position.z = flame.userData.baseZ + Math.cos(state.time * 11 + flame.userData.phase) * fireball.radius * 0.16;
+      flame.position.y = flame.userData.baseY + flicker * fireball.radius * 0.22;
+      flame.material.opacity = THREE.MathUtils.clamp(flame.userData.baseOpacity + flicker * 0.16, 0.28, 1);
+    }
+    let impact = fireball.mesh.position.y <= fireball.radius * 0.55;
+    if (!impact) {
+      impact = collidableCars.some((car) =>
+        car.visible && !car.userData.waitingForEntry && fireball.mesh.position.distanceToSquared(car.position) < (CAR_RADIUS + fireball.radius) ** 2,
+      );
+    }
+    if (!impact) continue;
+    const origin = fireball.mesh.position.clone();
+    origin.y = Math.max(0.55, origin.y);
+    city.remove(fireball.mesh);
+    fireball.mesh.traverse((part) => {
+      part.geometry?.dispose();
+      part.material?.dispose();
+    });
+    solarFireballs.splice(i, 1);
+    createSolarFire(origin);
+  }
+  updateSolarFires(dt);
+}
+
+function createSolarFire(origin) {
+  const fire = new THREE.Group();
+  fire.position.copy(origin);
+  fire.position.y = 0.2;
+  const scorch = new THREE.Mesh(
+    new THREE.CircleGeometry(THREE.MathUtils.randFloat(2.8, 4.2), 30),
+    new THREE.MeshBasicMaterial({ color: 0x160c08, transparent: true, opacity: 0.78, depthWrite: false }),
+  );
+  scorch.rotation.x = -Math.PI / 2;
+  scorch.position.set(origin.x, 0.18, origin.z);
+  scorch.rotation.z = Math.random() * Math.PI;
+  city.add(scorch);
+  solarScorches.push(scorch);
+  if (solarScorches.length > 40) {
+    const oldest = solarScorches.shift();
+    city.remove(oldest);
+    oldest.geometry.dispose();
+    oldest.material.dispose();
+  }
+  const ember = new THREE.Mesh(
+    new THREE.CircleGeometry(3.2, 28),
+    new THREE.MeshBasicMaterial({ color: 0xb92f0c, transparent: true, opacity: 0.12, depthWrite: false, blending: THREE.AdditiveBlending }),
+  );
+  ember.rotation.x = -Math.PI / 2;
+  ember.position.y = 0.025;
+  ember.scale.setScalar(0.28);
+  fire.add(ember);
+  const fireLight = new THREE.PointLight(0xff6a1a, 0, 22, 1.5);
+  fireLight.position.y = 1.7;
+  fire.add(fireLight);
+  for (let i = 0; i < 6; i++) {
+    const rock = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(THREE.MathUtils.randFloat(0.12, 0.34), 0),
+      new THREE.MeshStandardMaterial({ color: 0x24130d, emissive: 0x7a1708, emissiveIntensity: 0.45, roughness: 1 }),
+    );
+    const angle = Math.random() * Math.PI * 2;
+    const distance = THREE.MathUtils.randFloat(0.55, 2.4);
+    rock.position.set(Math.cos(angle) * distance, 0.13, Math.sin(angle) * distance);
+    rock.rotation.set(Math.random(), Math.random(), Math.random());
+    fire.add(rock);
+  }
+  const flames = [];
+  for (let i = 0; i < 13; i++) {
+    const height = THREE.MathUtils.randFloat(1.4, 4.8);
+    const width = THREE.MathUtils.randFloat(0.75, 1.7);
+    const flame = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: getSolarFlameTexture(i + 1),
+        color: 0xffffff,
+        transparent: true,
+        opacity: THREE.MathUtils.randFloat(0.55, 0.94),
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    const angle = Math.random() * Math.PI * 2;
+    const distance = Math.random() * 2.2;
+    flame.position.set(Math.cos(angle) * distance, height / 2, Math.sin(angle) * distance);
+    flame.userData.baseX = flame.position.x;
+    flame.userData.baseY = flame.position.y;
+    flame.userData.baseZ = flame.position.z;
+    flame.userData.baseOpacity = flame.material.opacity;
+    flame.userData.phase = Math.random() * Math.PI * 2;
+    flame.userData.baseWidth = width;
+    flame.userData.baseHeight = height;
+    flame.scale.set(width * 0.04, height * 0.04, 1);
+    flames.push(flame);
+    fire.add(flame);
+  }
+  const smoke = [];
+  for (let i = 0; i < 5; i++) {
+    const puff = new THREE.Mesh(
+      new THREE.SphereGeometry(0.65 + i * 0.14, 10, 7),
+      new THREE.MeshBasicMaterial({ color: 0x292725, transparent: true, opacity: 0.32, depthWrite: false }),
+    );
+    puff.position.set(THREE.MathUtils.randFloatSpread(1.2), 2.8 + i * 0.75, THREE.MathUtils.randFloatSpread(1.2));
+    puff.userData.baseY = puff.position.y;
+    puff.userData.phase = Math.random() * Math.PI * 2;
+    smoke.push(puff);
+    fire.add(puff);
+  }
+  spawnSolarImpactEmbers(origin);
+  playSolarImpactSound();
+  city.add(fire);
+  solarFires.push({ mesh: fire, ember, fireLight, flames, smoke, bornAt: state.time, duration: THREE.MathUtils.randFloat(10, 15) });
+  for (let i = 0; i < solarFires.length; i++) solarFires[i].fireLight.visible = i >= solarFires.length - 8;
+}
+
+function spawnSolarImpactEmbers(origin) {
+  for (let i = 0; i < 24; i++) {
+    const ember = new THREE.Mesh(
+      new THREE.SphereGeometry(THREE.MathUtils.randFloat(0.035, 0.11), 6, 4),
+      new THREE.MeshBasicMaterial({ color: i % 3 ? 0xff7a18 : 0xffdf72, transparent: true, opacity: 1, depthWrite: false }),
+    );
+    ember.position.copy(origin).add(new THREE.Vector3(0, 0.35, 0));
+    const angle = Math.random() * Math.PI * 2;
+    const speed = THREE.MathUtils.randFloat(3, 12);
+    city.add(ember);
+    solarImpactEmbers.push({
+      mesh: ember,
+      velocity: new THREE.Vector3(Math.cos(angle) * speed, THREE.MathUtils.randFloat(3.5, 11), Math.sin(angle) * speed),
+      bornAt: state.time,
+      duration: THREE.MathUtils.randFloat(0.7, 1.5),
+    });
+  }
+}
+
+function updateSolarFires(dt) {
+  for (let i = solarFires.length - 1; i >= 0; i--) {
+    const fire = solarFires[i];
+    const age = state.time - fire.bornAt;
+    const smolder = THREE.MathUtils.smoothstep(age, 0, 1.25);
+    const growth = THREE.MathUtils.smoothstep(age, 0.9, 3.8);
+    const fade = THREE.MathUtils.clamp((fire.duration - age) / 1.8, 0, 1);
+    const flameStrength = (0.035 + growth * 0.965) * fade;
+    fire.ember.scale.setScalar((0.28 + growth * 0.72) * fade);
+    fire.ember.material.opacity = (0.1 + smolder * 0.12 + growth * 0.2) * fade;
+    fire.fireLight.intensity = (8 + growth * 42) * fade * (0.88 + Math.sin(state.time * 17 + fire.bornAt) * 0.12);
+    for (const flame of fire.flames) {
+      const flicker = Math.sin(state.time * 13 + flame.userData.phase);
+      flame.scale.set(
+        flame.userData.baseWidth * (0.86 + flicker * 0.15) * flameStrength,
+        flame.userData.baseHeight * (0.9 + flicker * 0.22) * flameStrength,
+        1,
+      );
+      flame.position.x = flame.userData.baseX * growth + Math.sin(state.time * 8 + flame.userData.phase) * 0.18 * growth;
+      flame.position.z = flame.userData.baseZ * growth + Math.cos(state.time * 9 + flame.userData.phase) * 0.18 * growth;
+      flame.position.y = flame.userData.baseY * Math.max(0.035, flameStrength);
+      flame.material.opacity = flame.userData.baseOpacity * flameStrength;
+    }
+    for (const puff of fire.smoke) {
+      puff.position.y += dt * 0.38;
+      puff.position.x += Math.sin(state.time * 1.7 + puff.userData.phase) * dt * 0.18;
+      puff.scale.setScalar(0.45 + smolder * 0.4 + growth * 0.35);
+      puff.material.opacity = (0.08 + smolder * 0.16 + growth * 0.11) * fade;
+    }
+    if (age < fire.duration) continue;
+    city.remove(fire.mesh);
+    fire.mesh.traverse((part) => {
+      part.geometry?.dispose();
+      part.material?.dispose();
+    });
+    solarFires.splice(i, 1);
+  }
+  updateSolarImpactEmbers(dt);
+}
+
+function updateSolarImpactEmbers(dt) {
+  for (let i = solarImpactEmbers.length - 1; i >= 0; i--) {
+    const ember = solarImpactEmbers[i];
+    const age = state.time - ember.bornAt;
+    ember.velocity.y -= 18 * dt;
+    ember.mesh.position.addScaledVector(ember.velocity, dt);
+    if (ember.mesh.position.y < 0.16) {
+      ember.mesh.position.y = 0.16;
+      ember.velocity.y *= -0.22;
+      ember.velocity.x *= 0.72;
+      ember.velocity.z *= 0.72;
+    }
+    ember.mesh.material.opacity = THREE.MathUtils.clamp(1 - age / ember.duration, 0, 1);
+    if (age < ember.duration) continue;
+    city.remove(ember.mesh);
+    ember.mesh.geometry.dispose();
+    ember.mesh.material.dispose();
+    solarImpactEmbers.splice(i, 1);
+  }
+}
+
+function playSolarImpactSound() {
+  const audio = ensureAudio();
+  if (!audio) return;
+  const now = audio.currentTime;
+  const oscillator = audio.createOscillator();
+  const gain = audio.createGain();
+  oscillator.type = "sine";
+  oscillator.frequency.setValueAtTime(82, now);
+  oscillator.frequency.exponentialRampToValueAtTime(34, now + 0.32);
+  gain.gain.setValueAtTime(0.22, now);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.38);
+  oscillator.connect(gain);
+  gain.connect(audio.destination);
+  oscillator.start(now);
+  oscillator.stop(now + 0.4);
+}
+
 function updateWeaponEffects(dt) {
   if (state.policeTriggerHeld && state.policeWeapon === "pistol" && state.time - state.policeTriggerStartedAt >= 0.2) {
     firePolicePistol(true);
@@ -2846,6 +3243,12 @@ function updateWeaponEffects(dt) {
       effect.mesh.position.y += dt * 1.05;
     }
     if (effect.kind === "shockwave") effect.mesh.scale.setScalar(0.5 + progress * 6.5);
+    if (effect.kind === "sunBurst") effect.mesh.scale.setScalar(10 + Math.sin(progress * Math.PI) * 58);
+    if (effect.kind === "sunCore") effect.mesh.scale.setScalar(7 + Math.sin(progress * Math.PI) * 34);
+    if (effect.kind === "sunFragment" && effect.velocity) {
+      effect.mesh.position.addScaledVector(effect.velocity, dt);
+      effect.velocity.multiplyScalar(Math.max(0, 1 - dt * 0.55));
+    }
     if (effect.kind === "spark" && effect.velocity) {
       effect.velocity.y -= 15 * dt;
       effect.mesh.position.addScaledVector(effect.velocity, dt);
@@ -3019,22 +3422,32 @@ function updateRockets(dt) {
     const travel = rocket.speed * dt;
     policeRaycaster.set(rocket.mesh.position, rocket.direction);
     policeRaycaster.far = travel + 0.35;
-    const hit = policeRaycaster.intersectObjects(city.children, true).find((entry) =>
+    const cityHit = policeRaycaster.intersectObjects(city.children, true).find((entry) =>
       !entry.object.userData.ignoreBulletRay && !entry.object.parent?.userData.ignoreBulletRay,
     );
-    if (!hit && state.time - rocket.bornAt < 4) {
+    const sunHit = canHitSun() ? policeRaycaster.intersectObject(sunDisk, false)[0] : null;
+    const hit = sunHit && (!cityHit || sunHit.distance < cityHit.distance) ? sunHit : cityHit;
+    if (!hit && state.time - rocket.bornAt < 10) {
       rocket.mesh.position.addScaledVector(rocket.direction, travel);
       continue;
     }
     const origin = hit ? hit.point.clone() : rocket.mesh.position.clone();
     city.remove(rocket.mesh);
     rockets.splice(i, 1);
+    if (hit?.object === sunDisk) {
+      destroySun();
+      continue;
+    }
     createVehicleExplosion(origin);
     playExplosionSound();
     damageCarsNearExplosion(origin, null);
     damagePedestriansNearExplosion(origin);
   }
   policeRaycaster.far = Infinity;
+}
+
+function canHitSun() {
+  return !state.sunDestroyed && sunDisk?.visible && sunDisk.material.opacity > 0.08;
 }
 
 function togglePoliceMode() {
