@@ -228,6 +228,8 @@ const dirs = {
 init();
 animate();
 
+window.setGameTime = setGameTime;
+
 function init() {
   scene.add(city);
   city.add(buildings, roads);
@@ -1535,6 +1537,35 @@ function updateDayNightCycle(dt) {
   }
   updateStreetLights(botHeadlightsOn);
   updateBotHeadlightPool(botHeadlightsOn);
+}
+
+function setGameTime(hour, minute = 0) {
+  let hours = Number(hour);
+  let minutes = Number(minute);
+  if (typeof hour === "string") {
+    const match = hour.trim().match(/^(\d{1,2})(?::(\d{1,2}))?\s*(am|pm)?$/i);
+    if (!match) throw new TypeError('Use setGameTime(20), setGameTime(20, 30), or setGameTime("8:00 PM").');
+    hours = Number(match[1]);
+    minutes = Number(match[2] || 0);
+    const suffix = match[3]?.toLowerCase();
+    if (suffix) {
+      hours %= 12;
+      if (suffix === "pm") hours += 12;
+    }
+  }
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || hours < 0 || hours >= 24 || minutes < 0 || minutes >= 60) {
+    throw new RangeError("Time must be between 00:00 and 23:59.");
+  }
+  const decimalHours = hours + minutes / 60;
+  if (decimalHours >= 6 && decimalHours < 18) {
+    state.skyTime = ((decimalHours - 6) / 12) * DAY_DURATION;
+  } else {
+    const hoursAfterSixPm = decimalHours >= 18 ? decimalHours - 18 : decimalHours + 6;
+    state.skyTime = DAY_DURATION + (hoursAfterSixPm / 12) * NIGHT_DURATION;
+  }
+  updateDayNightCycle(0);
+  updateHud();
+  return formatGameClock();
 }
 
 function formatGameClock() {
