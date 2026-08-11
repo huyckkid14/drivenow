@@ -50,6 +50,7 @@ const closeSettingsEl = document.querySelector("#closeSettings");
 const resumeGameEl = document.querySelector("#resumeGame");
 const qualitySettingEl = document.querySelector("#qualitySetting");
 const fpsReadingEl = document.querySelector("#fpsReading");
+const gameClockEl = document.querySelector("#gameClock");
 
 const clock = new THREE.Clock();
 const keys = new Set();
@@ -68,6 +69,7 @@ const hijackedDrivers = [];
 const securityCameras = [];
 const streetLights = [];
 const streetLightPool = [];
+const botHeadlightPool = [];
 const buildingObstacles = [];
 const botSpawnCandidates = [];
 const botEntryCandidates = [];
@@ -201,6 +203,7 @@ const state = {
   playerHeadlights: false,
   streetLightsOn: false,
   nextStreetLightRefresh: 0,
+  nextBotHeadlightRefresh: 0,
   onFoot: false,
   securityRoom: false,
   securitySelected: null,
@@ -1469,6 +1472,18 @@ function createSkyCycleObjects() {
   });
   starField = new THREE.Points(starGeometry, starMaterial);
   scene.add(starField);
+
+  for (let i = 0; i < 8; i++) {
+    const target = new THREE.Object3D();
+    // One pooled beam represents both physical bot headlights, so its output
+    // matches the player's two 115-intensity beams.
+    const light = new THREE.SpotLight(0xfff2c2, 230, 78, Math.PI / 7, 0.42, 1.2);
+    light.target = target;
+    light.visible = false;
+    light.castShadow = false;
+    scene.add(light, target);
+    botHeadlightPool.push({ light, target, car: null });
+  }
 }
 
 function updateDayNightCycle(dt) {
@@ -1519,6 +1534,20 @@ function updateDayNightCycle(dt) {
     updateVehicleHeadlights(botHeadlightsOn);
   }
   updateStreetLights(botHeadlightsOn);
+  updateBotHeadlightPool(botHeadlightsOn);
+}
+
+function formatGameClock() {
+  const daytime = state.skyTime < DAY_DURATION;
+  const phase = daytime
+    ? state.skyTime / DAY_DURATION
+    : (state.skyTime - DAY_DURATION) / NIGHT_DURATION;
+  const totalHours = (daytime ? 6 + phase * 12 : 18 + phase * 12) % 24;
+  const hours24 = Math.floor(totalHours);
+  const minutes = Math.floor((totalHours - hours24) * 60);
+  const suffix = hours24 >= 12 ? "PM" : "AM";
+  const hours12 = hours24 % 12 || 12;
+  return `${hours12}:${String(minutes).padStart(2, "0")} ${suffix}`;
 }
 
 function updateVehicleHeadlights(nightActive) {
@@ -1533,6 +1562,36 @@ function setCarHeadlights(car, active) {
   for (const lamp of car.userData.headlights || []) {
     lamp.material.emissiveIntensity = active ? 9.5 : 0.12;
     lamp.material.color.set(active ? 0xfff9d9 : 0xb9b59f);
+  }
+}
+
+function updateBotHeadlightPool(active) {
+  if (!active) {
+    for (const entry of botHeadlightPool) entry.light.visible = false;
+    return;
+  }
+  if (state.time >= state.nextBotHeadlightRefresh) {
+    state.nextBotHeadlightRefresh = state.time + 0.35;
+    const playerPosition = state.player.position;
+    const nearestBots = cars
+      .filter((car) => !car.userData.player && car.visible && !car.userData.waitingForEntry && !car.userData.immobilized && !car.userData.destroyed)
+      .map((car) => ({ car, distance: car.position.distanceToSquared(playerPosition) }))
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, botHeadlightPool.length);
+    for (let i = 0; i < botHeadlightPool.length; i++) botHeadlightPool[i].car = nearestBots[i]?.car || null;
+  }
+  for (const entry of botHeadlightPool) {
+    const car = entry.car;
+    if (!car || !car.visible || car.userData.immobilized) {
+      entry.light.visible = false;
+      continue;
+    }
+    const forward = getForward(car).normalize();
+    entry.light.position.copy(car.position).addScaledVector(forward, 2.05);
+    entry.light.position.y = 0.92;
+    entry.target.position.copy(entry.light.position).addScaledVector(forward, 34);
+    entry.target.position.y = 0.15;
+    entry.light.visible = true;
   }
 }
 
@@ -5868,6 +5927,7 @@ function updateHud() {
   aimVignetteEl.hidden = !aimingDownSights;
   pistolCrosshairEl.classList.toggle("aiming", aimingDownSights);
   const speed = Math.round(Math.abs(state.player.userData.speed) * 2.237);
+  gameClockEl.textContent = formatGameClock();
   const dashboardVisible = state.cameraView === 2 && !state.onFoot && !state.securityRoom && !state.policeInterview;
   const playerData = state.player.userData;
   if (playerData.cockpit) playerData.cockpit.visible = dashboardVisible;
@@ -6057,6 +6117,9 @@ function updateCockpitDisplay(speed, rpm, leftActive = false, rightActive = fals
   clusterContext.font = "bold 28px system-ui";
   clusterContext.textAlign = "right";
   clusterContext.fillText(state.gear === "reverse" ? "R" : "D", 356, 170);
+  clusterContext.fillStyle = "#ffdc69";
+  clusterContext.font = "bold 16px system-ui";
+  clusterContext.fillText(formatGameClock(), 366, 27);
   if (state.policeMode) {
     clusterContext.fillStyle = "#e32636";
     clusterContext.fillRect(0, 0, clusterCanvas.width / 2, 8);

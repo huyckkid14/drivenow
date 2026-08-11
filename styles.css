@@ -269,6 +269,22 @@ body.security-view #status {
   backdrop-filter: blur(10px);
 }
 
+#gameClock {
+  position: fixed;
+  top: 55px;
+  right: 16px;
+  z-index: 60;
+  min-width: 72px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 220, 105, 0.3);
+  border-radius: 8px;
+  background: rgba(8,13,12,.72);
+  color: #ffdc69;
+  font: 850 12px/1 system-ui;
+  text-align: center;
+  backdrop-filter: blur(10px);
+}
+
 #settingsOverlay {
   position: fixed;
   inset: 0;
