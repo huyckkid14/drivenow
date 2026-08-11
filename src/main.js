@@ -66,6 +66,8 @@ const npcPedestrians = [];
 const crashResponders = [];
 const hijackedDrivers = [];
 const securityCameras = [];
+const streetLights = [];
+const streetLightPool = [];
 const buildingObstacles = [];
 const botSpawnCandidates = [];
 const botEntryCandidates = [];
@@ -73,6 +75,19 @@ const buildings = new THREE.Group();
 const roads = new THREE.Group();
 const city = new THREE.Group();
 const botColors = [0x3d78ff, 0xf25f5c, 0x70c1b3, 0xf7b267, 0xb388eb, 0x64b96a, 0xef476f];
+const DAY_DURATION = 120;
+const NIGHT_DURATION = 180;
+const SKY_CYCLE_DURATION = DAY_DURATION + NIGHT_DURATION;
+const DAY_SKY = new THREE.Color(0x9bc8e8);
+const SUNSET_SKY = new THREE.Color(0xf08b62);
+const NIGHT_SKY = new THREE.Color(0x030817);
+let hemisphereLight;
+let sunLight;
+let moonLight;
+let sunDisk;
+let moonDisk;
+let starField;
+let streetLightBulbMaterial;
 
 const ROAD_HALF = 7.2;
 const TRAFFIC_LANE_MAGNITUDES = [1.75, 5.25];
@@ -180,6 +195,12 @@ const state = {
   quality: "high",
   fpsFrames: 0,
   fpsElapsed: 0,
+  skyTime: DAY_DURATION * 0.25,
+  daylight: 1,
+  botHeadlightsOn: false,
+  playerHeadlights: false,
+  streetLightsOn: false,
+  nextStreetLightRefresh: 0,
   onFoot: false,
   securityRoom: false,
   securitySelected: null,
@@ -208,18 +229,22 @@ function init() {
   scene.add(city);
   city.add(buildings, roads);
 
-  const hemi = new THREE.HemisphereLight(0xf7fbff, 0x47624f, 2.2);
-  scene.add(hemi);
+  hemisphereLight = new THREE.HemisphereLight(0xf7fbff, 0x233342, 2.2);
+  scene.add(hemisphereLight);
 
-  const sun = new THREE.DirectionalLight(0xffffff, 2.7);
-  sun.position.set(-45, 80, 40);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -120;
-  sun.shadow.camera.right = 120;
-  sun.shadow.camera.top = 120;
-  sun.shadow.camera.bottom = -120;
-  scene.add(sun);
+  sunLight = new THREE.DirectionalLight(0xffffff, 2.7);
+  sunLight.position.set(-45, 80, 40);
+  sunLight.castShadow = true;
+  sunLight.shadow.mapSize.set(2048, 2048);
+  sunLight.shadow.camera.left = -120;
+  sunLight.shadow.camera.right = 120;
+  sunLight.shadow.camera.top = 120;
+  sunLight.shadow.camera.bottom = -120;
+  scene.add(sunLight);
+
+  moonLight = new THREE.DirectionalLight(0x9db9ff, 0);
+  scene.add(moonLight);
+  createSkyCycleObjects();
 
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(460, 460),
@@ -230,6 +255,7 @@ function init() {
   city.add(ground);
 
   createRoads();
+  createStreetLights();
   createRacingArea();
   createBlocks();
   createSecurityCameraRoom();
@@ -270,6 +296,7 @@ function init() {
   updateBotSensitivity();
   updateTrafficDensity();
   applyQualitySetting();
+  updateDayNightCycle(0);
   loadingEl.hidden = true;
 }
 
@@ -371,6 +398,64 @@ function createRoads() {
       }
     }
   }
+}
+
+function createStreetLights() {
+  const poleMaterial = new THREE.MeshStandardMaterial({ color: 0x252d31, metalness: 0.62, roughness: 0.42 });
+  streetLightBulbMaterial = new THREE.MeshStandardMaterial({
+    color: 0x6f716b,
+    emissive: 0xffe7a3,
+    emissiveIntensity: 0.05,
+    roughness: 0.18,
+  });
+  const boundaries = [-BOUNDS, ...GRID, BOUNDS];
+  const alongPositions = [];
+  for (let i = 0; i < boundaries.length - 1; i++) {
+    const start = boundaries[i];
+    const end = boundaries[i + 1];
+    if (end - start < 38) continue;
+    alongPositions.push(start + (end - start) / 3, start + (end - start) * 2 / 3);
+  }
+
+  for (const fixed of GRID) {
+    for (const along of alongPositions) {
+      addStreetLightFixture("x", along, fixed, -1, poleMaterial);
+      addStreetLightFixture("x", along, fixed, 1, poleMaterial);
+      addStreetLightFixture("z", along, fixed, -1, poleMaterial);
+      addStreetLightFixture("z", along, fixed, 1, poleMaterial);
+    }
+  }
+
+  for (let i = 0; i < 16; i++) {
+    const light = new THREE.PointLight(0xffe4a0, 0, 34, 1.35);
+    light.visible = false;
+    light.castShadow = false;
+    scene.add(light);
+    streetLightPool.push(light);
+  }
+}
+
+function addStreetLightFixture(axis, along, fixed, side, poleMaterial) {
+  const poleOffset = PLAYER_LANE_OFFSET + PLAYER_LANE_WIDTH / 2 + 0.95;
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.18, 7.4, 10), poleMaterial);
+  const arm = new THREE.Mesh(
+    axis === "x" ? new THREE.BoxGeometry(0.13, 0.13, 2.6) : new THREE.BoxGeometry(2.6, 0.13, 0.13),
+    poleMaterial,
+  );
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 8), streetLightBulbMaterial);
+  if (axis === "x") {
+    pole.position.set(along, 3.7, fixed + side * poleOffset);
+    arm.position.set(along, 7.35, fixed + side * (poleOffset - 1.3));
+    bulb.position.set(along, 7.18, fixed + side * (poleOffset - 2.5));
+  } else {
+    pole.position.set(fixed + side * poleOffset, 3.7, along);
+    arm.position.set(fixed + side * (poleOffset - 1.3), 7.35, along);
+    bulb.position.set(fixed + side * (poleOffset - 2.5), 7.18, along);
+  }
+  pole.castShadow = false;
+  arm.castShadow = false;
+  city.add(pole, arm, bulb);
+  streetLights.push({ bulb, position: bulb.position });
 }
 
 function createRacingArea() {
@@ -707,6 +792,7 @@ function createPlayer() {
     damagePull: 0,
     indicators: player.userData.indicators,
     brakeLights: player.userData.brakeLights,
+    headlights: player.userData.headlights,
     driverDoor: player.userData.driverDoor,
     body: player.userData.body,
     cabin: player.userData.cabin,
@@ -717,6 +803,7 @@ function createPlayer() {
   cars.push(player);
   collidableCars.push(player);
   state.player = player;
+  ensurePlayerHeadlightBeams(player);
   createCockpitInterior(player);
 }
 
@@ -1228,6 +1315,7 @@ function spawnBot(start) {
     bodyColor: botColors[index % botColors.length],
     indicators: bot.userData.indicators,
     brakeLights: bot.userData.brakeLights,
+    headlights: bot.userData.headlights,
     driverDoor: bot.userData.driverDoor,
     body: bot.userData.body,
     cabin: bot.userData.cabin,
@@ -1244,7 +1332,7 @@ function makeCar(color, isPlayer) {
   const cabinMat = new THREE.MeshStandardMaterial({ color: 0x1e3945, roughness: 0.24, metalness: 0.08 });
   const tireMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 });
   const lightMat = new THREE.MeshStandardMaterial({ color: 0xffd166, emissive: 0xffa400, emissiveIntensity: 0 });
-  const headlightMat = new THREE.MeshStandardMaterial({ color: 0xf7f2d8, emissive: 0xfff0b0, emissiveIntensity: 0.75 });
+  const headlightMat = new THREE.MeshStandardMaterial({ color: 0xb9b59f, emissive: 0xfff0b0, emissiveIntensity: 0.12 });
   const brakeMat = new THREE.MeshStandardMaterial({ color: 0x9d1010, emissive: 0xff1515, emissiveIntensity: 0.12 });
 
   const body = new THREE.Mesh(new THREE.BoxGeometry(2.35, 0.72, 4.1), bodyMat);
@@ -1258,10 +1346,12 @@ function makeCar(color, isPlayer) {
   cabin.castShadow = true;
   car.add(cabin);
 
+  const headlights = [];
   for (const x of [-0.58, 0.58]) {
     const headlight = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.22, 0.16), headlightMat.clone());
     headlight.position.set(x, 0.82, 2.14);
     car.add(headlight);
+    headlights.push(headlight);
   }
 
   const indicators = [];
@@ -1323,6 +1413,7 @@ function makeCar(color, isPlayer) {
 
   car.userData.indicators = indicators;
   car.userData.brakeLights = brakeLights;
+  car.userData.headlights = headlights;
   car.userData.body = body;
   car.userData.cabin = cabin;
   car.userData.wheels = car.children.filter((child) => child.geometry?.type === "CylinderGeometry");
@@ -1345,6 +1436,153 @@ function createSkylineDetails() {
   }
 }
 
+function createSkyCycleObjects() {
+  const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xfff1b0, fog: false, transparent: true });
+  sunDisk = new THREE.Mesh(new THREE.SphereGeometry(10, 24, 16), sunMaterial);
+  scene.add(sunDisk);
+
+  const moonMaterial = new THREE.MeshBasicMaterial({ color: 0xdce7ff, fog: false, transparent: true });
+  moonDisk = new THREE.Mesh(new THREE.SphereGeometry(7, 24, 16), moonMaterial);
+  scene.add(moonDisk);
+
+  const positions = [];
+  for (let i = 0; i < 650; i++) {
+    const azimuth = (i * 2.399963 + Math.sin(i * 17.17) * 0.35) % (Math.PI * 2);
+    const elevation = 0.12 + ((i * 73) % 100) / 100 * 1.15;
+    const radius = 430;
+    positions.push(
+      Math.cos(azimuth) * Math.cos(elevation) * radius,
+      Math.sin(elevation) * radius,
+      Math.sin(azimuth) * Math.cos(elevation) * radius,
+    );
+  }
+  const starGeometry = new THREE.BufferGeometry();
+  starGeometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  const starMaterial = new THREE.PointsMaterial({
+    color: 0xe8efff,
+    size: 1.35,
+    sizeAttenuation: true,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    fog: false,
+  });
+  starField = new THREE.Points(starGeometry, starMaterial);
+  scene.add(starField);
+}
+
+function updateDayNightCycle(dt) {
+  state.skyTime = (state.skyTime + dt) % SKY_CYCLE_DURATION;
+  const daytime = state.skyTime < DAY_DURATION;
+  const phase = daytime
+    ? state.skyTime / DAY_DURATION
+    : (state.skyTime - DAY_DURATION) / NIGHT_DURATION;
+  const elevation = Math.sin(phase * Math.PI);
+  const daylight = daytime ? THREE.MathUtils.smoothstep(elevation, 0.02, 0.58) : 0;
+  const nightStrength = THREE.MathUtils.smoothstep(1 - daylight, 0.35, 0.96);
+  state.daylight = daylight;
+
+  const skyColor = NIGHT_SKY.clone().lerp(DAY_SKY, daylight);
+  if (daytime) {
+    const twilight = Math.max(0, 1 - Math.abs(phase - 0.5) * 2) > 0
+      ? Math.max(0, 1 - daylight * 1.8) * Math.sin(phase * Math.PI)
+      : 0;
+    skyColor.lerp(SUNSET_SKY, twilight * 0.62);
+  }
+  scene.background.copy(skyColor);
+  scene.fog.color.copy(skyColor);
+
+  if (daytime) {
+    const angle = phase * Math.PI;
+    sunDisk.position.set(Math.cos(angle) * 350, 18 + elevation * 255, -210);
+    sunLight.position.copy(sunDisk.position).multiplyScalar(0.35);
+    sunDisk.material.opacity = THREE.MathUtils.smoothstep(elevation, 0, 0.12);
+    moonDisk.material.opacity = 0;
+  } else {
+    const angle = phase * Math.PI;
+    moonDisk.position.set(Math.cos(angle) * 350, 20 + elevation * 235, 205);
+    moonLight.position.copy(moonDisk.position).multiplyScalar(0.35);
+    moonDisk.material.opacity = THREE.MathUtils.smoothstep(elevation, 0, 0.12);
+    sunDisk.material.opacity = 0;
+  }
+  sunLight.intensity = 0.05 + daylight * 2.65;
+  sunLight.color.set(daylight < 0.35 ? 0xffad72 : 0xffffff);
+  moonLight.intensity = nightStrength * elevation * 0.48;
+  hemisphereLight.intensity = 0.16 + daylight * 2.04 + nightStrength * 0.08;
+  hemisphereLight.color.set(daylight > 0.35 ? 0xf7fbff : 0x819bd2);
+  starField.material.opacity = nightStrength * (0.62 + elevation * 0.38);
+  starField.rotation.y += dt * 0.004;
+
+  const botHeadlightsOn = nightStrength > 0.38;
+  if (botHeadlightsOn !== state.botHeadlightsOn) {
+    state.botHeadlightsOn = botHeadlightsOn;
+    updateVehicleHeadlights(botHeadlightsOn);
+  }
+  updateStreetLights(botHeadlightsOn);
+}
+
+function updateVehicleHeadlights(nightActive) {
+  for (const car of cars) {
+    const active = car.userData.player ? state.playerHeadlights : nightActive;
+    setCarHeadlights(car, active);
+    for (const beam of car.userData.headlightBeams || []) beam.visible = active && car === state.player;
+  }
+}
+
+function setCarHeadlights(car, active) {
+  for (const lamp of car.userData.headlights || []) {
+    lamp.material.emissiveIntensity = active ? 9.5 : 0.12;
+    lamp.material.color.set(active ? 0xfff9d9 : 0xb9b59f);
+  }
+}
+
+function updateStreetLights(active) {
+  if (active !== state.streetLightsOn) {
+    state.streetLightsOn = active;
+    streetLightBulbMaterial.emissiveIntensity = active ? 7.5 : 0.05;
+    streetLightBulbMaterial.color.set(active ? 0xfff0bd : 0x6f716b);
+    if (!active) {
+      for (const light of streetLightPool) light.visible = false;
+    }
+  }
+  if (!active || state.time < state.nextStreetLightRefresh) return;
+  state.nextStreetLightRefresh = state.time + 0.4;
+  const playerPosition = state.player.position;
+  const nearest = streetLights
+    .map((fixture) => ({ fixture, distance: fixture.position.distanceToSquared(playerPosition) }))
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, streetLightPool.length);
+  for (let i = 0; i < streetLightPool.length; i++) {
+    const light = streetLightPool[i];
+    const fixture = nearest[i]?.fixture;
+    if (!fixture) {
+      light.visible = false;
+      continue;
+    }
+    light.position.copy(fixture.position).add(new THREE.Vector3(0, -0.18, 0));
+    light.intensity = 48;
+    light.visible = true;
+  }
+}
+
+function ensurePlayerHeadlightBeams(car) {
+  if (car.userData.headlightBeams?.length) return;
+  const target = new THREE.Object3D();
+  target.position.set(0, 0.15, 38);
+  car.add(target);
+  const beams = [];
+  for (const x of [-0.62, 0.62]) {
+    const beam = new THREE.SpotLight(0xfff2c2, 115, 78, Math.PI / 7, 0.42, 1.2);
+    beam.position.set(x, 0.86, 2.18);
+    beam.target = target;
+    beam.castShadow = false;
+    beam.visible = false;
+    car.add(beam);
+    beams.push(beam);
+  }
+  car.userData.headlightBeams = beams;
+}
+
 function animate() {
   requestAnimationFrame(animate);
   const rawDelta = clock.getDelta();
@@ -1360,6 +1598,7 @@ function animate() {
     return;
   }
   state.time += dt;
+  updateDayNightCycle(dt);
   updateTrafficLights();
   updateCrashPhysics(dt);
   updateExplosionTumbles(dt);
@@ -2049,6 +2288,7 @@ function transferPlayerControl(target, message) {
   targetData.immobilized = false;
 
   state.player = target;
+  ensurePlayerHeadlightBeams(target);
   state.onFoot = false;
   state.cameraView = 2;
   state.gear = "drive";
@@ -5868,7 +6108,7 @@ function onKeyDown(event) {
   }
   ensureAudio();
   keys.add(key);
-  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "space", "q", "e", "z", "c", "d", "h", "p", "o", "1"].includes(key)) {
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "space", "q", "e", "z", "c", "d", "h", "l", "p", "o", "1"].includes(key)) {
     event.preventDefault();
     event.stopPropagation();
   }
@@ -5877,7 +6117,7 @@ function onKeyDown(event) {
     const pointerLockRequest = renderer.domElement.requestPointerLock?.();
     pointerLockRequest?.catch?.(() => {});
   }
-  if (event.repeat && ["q", "e", "z", "c", "d", "h", "p", "o", "1"].includes(key)) return;
+  if (event.repeat && ["q", "e", "z", "c", "d", "h", "l", "p", "o", "1"].includes(key)) return;
   if (key === "escape" && state.securityRoom) {
     state.securitySelected = null;
     event.preventDefault();
@@ -5916,6 +6156,12 @@ function onKeyDown(event) {
     statusEl.textContent = `${viewName} — D changes view`;
   }
   if (key === "h" && !state.onFoot && !state.securityRoom) startPlayerHorn();
+  if (key === "l" && !state.onFoot && !state.securityRoom) {
+    state.playerHeadlights = !state.playerHeadlights;
+    ensurePlayerHeadlightBeams(state.player);
+    updateVehicleHeadlights(state.daylight < 0.45);
+    statusEl.textContent = state.playerHeadlights ? "Headlights on" : "Headlights off";
+  }
   if (key === "p") {
     if (state.onFoot && state.policeMode) togglePolicePistol();
     else togglePoliceMode();
@@ -5930,7 +6176,7 @@ function onKeyDown(event) {
       statusEl.textContent = "Police siren on — traffic yielding";
     }
   }
-  if (["q", "e", "z", "c", "d", "h", "p", "o", "1"].includes(key)) state.toggleHeld.add(key);
+  if (["q", "e", "z", "c", "d", "h", "l", "p", "o", "1"].includes(key)) state.toggleHeld.add(key);
 }
 
 function onKeyPress(event) {
@@ -6092,6 +6338,7 @@ function normalizeKey(event) {
     KeyC: "c",
     KeyD: "d",
     KeyH: "h",
+    KeyL: "l",
     KeyP: "p",
     KeyO: "o",
     Digit1: "1",
