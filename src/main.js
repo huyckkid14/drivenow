@@ -3161,6 +3161,16 @@ function updateBots(dt) {
     }
 
     const activePoliceStop = state.policeTarget?.userData.policePullOver;
+    if (data.policeYielded && !state.policeSiren && (!activePoliceStop || activePoliceStop.complete)) {
+      // Once emergency traffic control ends, hand the car straight back to
+      // normal signal/intersection logic. The old timed recovery drove forward
+      // for several seconds without checking a newly red light.
+      data.policeYielded = false;
+      data.policeRecoveryUntil = 0;
+      data.policeRecoverySpeed = 0;
+      data.policeClearanceSpeed = 0;
+      data.policeClearanceSign = 0;
+    }
     if (data.policeYielded && (!activePoliceStop || activePoliceStop.complete)) {
       if (!data.policeRecoveryUntil) {
         data.policeRecoveryUntil = state.time + 3.5;
