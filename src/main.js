@@ -169,6 +169,10 @@ const state = {
   policePistolDrawn: false,
   policePistol: null,
   policeRpg: null,
+  policeFlashlightOn: false,
+  policeFlashlight: null,
+  policeFlashlightLight: null,
+  policeFlashlightTarget: null,
   policeWeapon: "pistol",
   policeAim: { yaw: 0, pitch: 0 },
   policeAimZoom: 0,
@@ -276,6 +280,7 @@ function init() {
   createIntersectionSecurityCameras();
   createPlayer();
   createPedestrian();
+  createPoliceFlashlight();
   createPolicePistol();
   createPoliceRpg();
   createBots();
@@ -1152,6 +1157,70 @@ function createPolicePistol() {
   state.policePistol = pistol;
 }
 
+function createPoliceFlashlight() {
+  const flashlight = new THREE.Group();
+  const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0x171b20, roughness: 0.36, metalness: 0.7 });
+  const gripMaterial = new THREE.MeshStandardMaterial({ color: 0x090b0d, roughness: 0.78 });
+  const lensMaterial = new THREE.MeshStandardMaterial({
+    color: 0xe9f7ff,
+    emissive: 0xd8f4ff,
+    emissiveIntensity: 2.2,
+    roughness: 0.18,
+  });
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.085, 0.48, 12), bodyMaterial);
+  body.rotation.x = Math.PI / 2;
+  const head = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.085, 0.16, 12), bodyMaterial);
+  head.rotation.x = Math.PI / 2;
+  head.position.z = 0.3;
+  const lens = new THREE.Mesh(new THREE.CircleGeometry(0.105, 16), lensMaterial);
+  lens.position.z = 0.385;
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.19, 0.14), gripMaterial);
+  grip.position.set(0, -0.12, -0.08);
+  flashlight.add(body, head, lens, grip);
+  flashlight.position.set(-0.47, 1.25, 0.3);
+  flashlight.visible = false;
+  flashlight.userData.ignoreBulletRay = true;
+  state.pedestrian.add(flashlight);
+
+  const target = new THREE.Object3D();
+  const light = new THREE.SpotLight(0xeaf8ff, 105, 62, Math.PI / 8, 0.42, 1.25);
+  light.target = target;
+  light.visible = false;
+  light.castShadow = false;
+  scene.add(light, target);
+  state.policeFlashlight = flashlight;
+  state.policeFlashlightLight = light;
+  state.policeFlashlightTarget = target;
+}
+
+function setPoliceFlashlight(active) {
+  state.policeFlashlightOn = Boolean(active && state.policeMode && state.onFoot && !state.securityRoom);
+  if (state.policeFlashlight) state.policeFlashlight.visible = state.policeFlashlightOn;
+  if (state.policeFlashlightLight) state.policeFlashlightLight.visible = state.policeFlashlightOn;
+}
+
+function togglePoliceFlashlight() {
+  if (!state.policeMode || !state.onFoot || state.securityRoom || state.carTransition) return;
+  setPoliceFlashlight(!state.policeFlashlightOn);
+  statusEl.textContent = state.policeFlashlightOn ? "Handheld flashlight on — F turns it off" : "Handheld flashlight off";
+}
+
+function updatePoliceFlashlight() {
+  if (!state.policeFlashlightOn || !state.policeMode || !state.onFoot || state.securityRoom || !state.pedestrian?.visible) {
+    setPoliceFlashlight(false);
+    return;
+  }
+  const person = state.pedestrian;
+  const origin = person.localToWorld(new THREE.Vector3(-0.47, 1.25, 0.68));
+  const direction = new THREE.Vector3(0, state.policePistolDrawn ? Math.sin(state.policeAim.pitch) : -0.04,
+    state.policePistolDrawn ? Math.cos(state.policeAim.pitch) : 1).applyQuaternion(person.getWorldQuaternion(new THREE.Quaternion())).normalize();
+  state.policeFlashlight.rotation.x = state.policePistolDrawn ? -state.policeAim.pitch : 0.04;
+  state.policeFlashlightLight.position.copy(origin);
+  state.policeFlashlightTarget.position.copy(origin).addScaledVector(direction, 42);
+  state.policeFlashlightLight.visible = true;
+  state.policeFlashlight.visible = true;
+}
+
 function createPoliceRpg() {
   const rpg = new THREE.Group();
   const tubeMat = new THREE.MeshStandardMaterial({ color: 0x354735, roughness: 0.72, metalness: 0.2 });
@@ -1731,6 +1800,7 @@ function animate() {
   updateExhaustSmoke(dt);
   updatePlayer(dt);
   updatePedestrian(dt);
+  updatePoliceFlashlight();
   updateNpcPedestrians(dt);
   updateBlastPedestrians(dt);
   updateCarDoor(dt);
@@ -2108,6 +2178,7 @@ function finishCarStep(transition) {
   state.gear = "drive";
   state.backupCameraActive = false;
   holsterPolicePistol();
+  setPoliceFlashlight(false);
   person.userData.velocity.set(0, 0, 0);
   person.userData.speed = 0;
   person.userData.steer = 0;
@@ -3610,6 +3681,7 @@ function togglePoliceMode() {
 
 function disablePoliceMode() {
   holsterPolicePistol();
+  setPoliceFlashlight(false);
   stopPoliceSiren();
   const car = state.player;
   if (car?.userData.policeKit) car.remove(car.userData.policeKit);
@@ -6690,7 +6762,7 @@ function onKeyDown(event) {
   }
   ensureAudio();
   keys.add(key);
-  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "space", "q", "e", "z", "c", "d", "h", "l", "p", "o", "1"].includes(key)) {
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "space", "q", "e", "f", "z", "c", "d", "h", "l", "p", "o", "1"].includes(key)) {
     event.preventDefault();
     event.stopPropagation();
   }
@@ -6699,7 +6771,7 @@ function onKeyDown(event) {
     const pointerLockRequest = renderer.domElement.requestPointerLock?.();
     pointerLockRequest?.catch?.(() => {});
   }
-  if (event.repeat && ["q", "e", "z", "c", "d", "h", "l", "p", "o", "1"].includes(key)) return;
+  if (event.repeat && ["q", "e", "f", "z", "c", "d", "h", "l", "p", "o", "1"].includes(key)) return;
   if (key === "escape" && state.securityRoom) {
     state.securitySelected = null;
     event.preventDefault();
@@ -6727,6 +6799,7 @@ function onKeyDown(event) {
     if (state.policePistolDrawn) switchPoliceWeapon();
     else toggleSignal("right");
   }
+  if (key === "f") togglePoliceFlashlight();
   if (key === "z") toggleHazards();
   if (key === "c") toggleCarExit();
   if (key === "d" && !state.introActive && !state.onFoot && !state.securityRoom && !state.policeInterview) {
@@ -6758,7 +6831,7 @@ function onKeyDown(event) {
       statusEl.textContent = "Police siren on — traffic yielding";
     }
   }
-  if (["q", "e", "z", "c", "d", "h", "l", "p", "o", "1"].includes(key)) state.toggleHeld.add(key);
+  if (["q", "e", "f", "z", "c", "d", "h", "l", "p", "o", "1"].includes(key)) state.toggleHeld.add(key);
 }
 
 function onKeyPress(event) {
@@ -7235,6 +7308,7 @@ function restartCity() {
   state.grenadeAimActive = false;
   state.grenadeCameraSnapBack = false;
   holsterPolicePistol();
+  setPoliceFlashlight(false);
   for (const grenade of grenades) city.remove(grenade.mesh);
   grenades.length = 0;
   for (const effect of weaponEffects) {
