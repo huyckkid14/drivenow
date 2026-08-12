@@ -205,6 +205,7 @@ const state = {
   skyTime: DAY_DURATION * 0.25,
   daylight: 1,
   sunDestroyed: false,
+  destroyedSunPosition: new THREE.Vector3(),
   nextSolarFireballAt: Infinity,
   botHeadlightsOn: false,
   playerHeadlights: false,
@@ -2851,35 +2852,81 @@ function destroySun() {
   if (state.sunDestroyed) return;
   const origin = sunDisk.getWorldPosition(new THREE.Vector3());
   state.sunDestroyed = true;
+  state.destroyedSunPosition.copy(origin);
   state.nextSolarFireballAt = state.time + 0.3;
   sunDisk.visible = false;
   const burst = new THREE.Mesh(
-    new THREE.SphereGeometry(1, 28, 20),
-    new THREE.MeshBasicMaterial({ color: 0xff7a18, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }),
+    new THREE.IcosahedronGeometry(1, 4),
+    new THREE.MeshBasicMaterial({ color: 0xff5a08, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }),
   );
   burst.position.copy(origin);
   city.add(burst);
-  weaponEffects.push({ mesh: burst, bornAt: state.time, duration: 2.8, kind: "sunBurst" });
+  weaponEffects.push({ mesh: burst, bornAt: state.time, duration: 4.2, kind: "sunBurst" });
   const core = new THREE.Mesh(
-    new THREE.SphereGeometry(1, 24, 18),
-    new THREE.MeshBasicMaterial({ color: 0xfff2a1, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }),
+    new THREE.IcosahedronGeometry(1, 3),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }),
   );
   core.position.copy(origin);
   city.add(core);
-  weaponEffects.push({ mesh: core, bornAt: state.time, duration: 1.8, kind: "sunCore" });
-  for (let i = 0; i < 28; i++) {
+  weaponEffects.push({ mesh: core, bornAt: state.time, duration: 2.4, kind: "sunCore" });
+
+  const shockwave = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 32, 20),
+    new THREE.MeshBasicMaterial({
+      color: 0xffd36a,
+      transparent: true,
+      opacity: 0.9,
+      side: THREE.BackSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  shockwave.position.copy(origin);
+  city.add(shockwave);
+  weaponEffects.push({ mesh: shockwave, bornAt: state.time, duration: 2.2, kind: "sunShockwave" });
+
+  for (let i = 0; i < 24; i++) {
+    const cloud = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(1, 2),
+      new THREE.MeshBasicMaterial({
+        color: [0xff2d00, 0xff6508, 0xffa51c, 0xffd85a][i % 4],
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    const direction = new THREE.Vector3(
+      THREE.MathUtils.randFloatSpread(1),
+      THREE.MathUtils.randFloatSpread(1),
+      THREE.MathUtils.randFloatSpread(1),
+    ).normalize();
+    cloud.position.copy(origin).addScaledVector(direction, THREE.MathUtils.randFloat(5, 22));
+    city.add(cloud);
+    weaponEffects.push({
+      mesh: cloud,
+      bornAt: state.time,
+      duration: THREE.MathUtils.randFloat(3.2, 4.8),
+      kind: "sunFireCloud",
+      velocity: direction.multiplyScalar(THREE.MathUtils.randFloat(5, 14)),
+      maxScale: THREE.MathUtils.randFloat(35, 72),
+      phase: Math.random() * Math.PI * 2,
+    });
+  }
+
+  for (let i = 0; i < 72; i++) {
     const fragment = new THREE.Mesh(
-      new THREE.SphereGeometry(0.5 + Math.random() * 0.8, 8, 6),
+      new THREE.SphereGeometry(0.7 + Math.random() * 1.5, 8, 6),
       new THREE.MeshBasicMaterial({ color: i % 2 ? 0xffaa22 : 0xffe37a, transparent: true, opacity: 1 }),
     );
     fragment.position.copy(origin);
     const velocity = new THREE.Vector3(
-      THREE.MathUtils.randFloatSpread(55),
-      THREE.MathUtils.randFloatSpread(55),
-      THREE.MathUtils.randFloatSpread(55),
+      THREE.MathUtils.randFloatSpread(120),
+      THREE.MathUtils.randFloatSpread(120),
+      THREE.MathUtils.randFloatSpread(120),
     );
     city.add(fragment);
-    weaponEffects.push({ mesh: fragment, bornAt: state.time, duration: 2.2 + Math.random(), kind: "sunFragment", velocity });
+    weaponEffects.push({ mesh: fragment, bornAt: state.time, duration: 3 + Math.random() * 2, kind: "sunFragment", velocity });
   }
   playExplosionSound();
   updateDayNightCycle(0);
@@ -2965,18 +3012,25 @@ function spawnSolarFireball() {
     flames.push(flame);
     fireball.add(flame);
   }
-  fireball.position.set(
+  const target = new THREE.Vector3(
     THREE.MathUtils.randFloatSpread(BOUNDS * 1.8),
-    THREE.MathUtils.randFloat(75, 115),
+    radius * 0.45,
     THREE.MathUtils.randFloatSpread(BOUNDS * 1.8),
   );
+  const sourceSpread = new THREE.Vector3(
+    THREE.MathUtils.randFloatSpread(18),
+    THREE.MathUtils.randFloatSpread(12),
+    THREE.MathUtils.randFloatSpread(18),
+  );
+  fireball.position.copy(state.destroyedSunPosition).add(sourceSpread);
+  const velocity = target.sub(fireball.position).normalize().multiplyScalar(THREE.MathUtils.randFloat(62, 78));
   city.add(fireball);
   solarFireballs.push({
     mesh: fireball,
     radius,
     core,
     flames,
-    velocity: new THREE.Vector3(THREE.MathUtils.randFloatSpread(5), -THREE.MathUtils.randFloat(24, 34), THREE.MathUtils.randFloatSpread(5)),
+    velocity,
   });
 }
 
@@ -3243,8 +3297,29 @@ function updateWeaponEffects(dt) {
       effect.mesh.position.y += dt * 1.05;
     }
     if (effect.kind === "shockwave") effect.mesh.scale.setScalar(0.5 + progress * 6.5);
-    if (effect.kind === "sunBurst") effect.mesh.scale.setScalar(10 + Math.sin(progress * Math.PI) * 58);
-    if (effect.kind === "sunCore") effect.mesh.scale.setScalar(7 + Math.sin(progress * Math.PI) * 34);
+    if (effect.kind === "sunBurst") {
+      effect.mesh.scale.setScalar(18 + Math.sin(Math.min(1, progress * 1.35) * Math.PI / 2) * 125);
+      effect.mesh.rotation.y += dt * 0.35;
+      effect.mesh.rotation.z -= dt * 0.2;
+      effect.mesh.material.opacity = Math.min(1, (1 - progress) * 1.8);
+    }
+    if (effect.kind === "sunCore") {
+      effect.mesh.scale.setScalar(12 + Math.sin(Math.min(1, progress * 1.7) * Math.PI / 2) * 82);
+      effect.mesh.material.opacity = Math.min(1, (1 - progress) * 2.4);
+    }
+    if (effect.kind === "sunShockwave") {
+      effect.mesh.scale.setScalar(20 + progress * 230);
+      effect.mesh.material.opacity = Math.pow(1 - progress, 2) * 0.82;
+    }
+    if (effect.kind === "sunFireCloud") {
+      const bloom = Math.sin(Math.min(1, progress * 1.5) * Math.PI / 2);
+      effect.mesh.scale.setScalar(5 + bloom * effect.maxScale * (0.9 + Math.sin(progress * 13 + effect.phase) * 0.1));
+      effect.mesh.position.addScaledVector(effect.velocity, dt);
+      effect.velocity.multiplyScalar(Math.max(0, 1 - dt * 0.35));
+      effect.mesh.rotation.x += dt * 0.2;
+      effect.mesh.rotation.y -= dt * 0.27;
+      effect.mesh.material.opacity = Math.min(0.95, (1 - progress) * 1.65);
+    }
     if (effect.kind === "sunFragment" && effect.velocity) {
       effect.mesh.position.addScaledVector(effect.velocity, dt);
       effect.velocity.multiplyScalar(Math.max(0, 1 - dt * 0.55));
