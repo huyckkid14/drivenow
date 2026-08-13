@@ -4177,10 +4177,14 @@ function updateBots(dt) {
       avoidance?.reverseForPlayer && playerReverseStepIsSafe(bot, candidate)
     );
     if (movementBlocked) {
+      if (data.laneChange?.phase === "moving") {
+        data.laneChange.blockedSince ||= state.time;
+      }
       data.speed = 0;
       data.velocity.set(0, 0, 0);
       data.braking = true;
     } else {
+      if (data.laneChange) data.laneChange.blockedSince = 0;
       bot.position.copy(candidate);
     }
     if (intersectionStop && !avoidance) {
@@ -4196,20 +4200,35 @@ function updateBotLaneChange(bot, avoidance, intersectionStop) {
   if (data.laneChange) {
     const change = data.laneChange;
     if (change.phase === "signaling") {
-      if (avoidance || intersectionStop || !isBotLaneChangeClear(bot, change.targetLane, dirs[data.dir])) {
-        data.laneChange = null;
-        data.nextLaneChangeAt = state.time + 4 + Math.random() * 6;
+      if (avoidance || intersectionStop) {
+        cancelBotLaneChange(bot);
+        return;
+      }
+      const openingAvailable = isBotLaneChangeClear(bot, change.targetLane, dirs[data.dir]);
+      if (!openingAvailable) {
+        // Keep searching with the indicator on, but do not wait forever for a
+        // gap that may never arrive. Cancelling also extinguishes the signal.
+        if (state.time >= change.giveUpAt) cancelBotLaneChange(bot);
         return;
       }
       if (state.time - change.startedAt < 0.85) return;
       change.phase = "moving";
+      change.blockedSince = 0;
+    } else if (change.phase === "moving" && change.blockedSince && state.time - change.blockedSince > 1.35) {
+      // A merge that unexpectedly loses its opening must not leave the bot
+      // stopped diagonally across both lanes. Return to its original lane with
+      // the signal off, then resume ordinary driving.
+      change.phase = "returning";
+      change.targetLane = change.originalLane;
+      change.signal = null;
+      change.blockedSince = 0;
     }
-    const targetCoordinate = botLaneCoordinate(data.dir, data.laneChange.targetLane, bot.position);
+    const targetCoordinate = botLaneCoordinate(data.dir, change.targetLane, bot.position);
     const currentCoordinate = data.dir === "east" || data.dir === "west" ? bot.position.z : bot.position.x;
     if (Math.abs(currentCoordinate - targetCoordinate) < 0.1) {
       if (data.dir === "east" || data.dir === "west") bot.position.z = targetCoordinate;
       else bot.position.x = targetCoordinate;
-      data.laneIndex = data.laneChange.targetLane;
+      data.laneIndex = change.targetLane;
       data.laneChange = null;
       data.nextLaneChangeAt = state.time + 7 + Math.random() * 12;
     }
@@ -4228,8 +4247,15 @@ function updateBotLaneChange(bot, avoidance, intersectionStop) {
     originalLane: data.laneIndex || 0,
     phase: "signaling",
     startedAt: state.time,
+    giveUpAt: state.time + 4.5,
+    blockedSince: 0,
     signal: botLaneChangeSignal(bot, targetLane),
   };
+}
+
+function cancelBotLaneChange(bot) {
+  bot.userData.laneChange = null;
+  bot.userData.nextLaneChangeAt = state.time + 5 + Math.random() * 7;
 }
 
 function botLaneCoordinate(dir, laneIndex, position) {
