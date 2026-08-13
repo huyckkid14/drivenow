@@ -20,6 +20,9 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.08;
 document.body.appendChild(renderer.domElement);
 const securityMonitorScene = new THREE.Scene();
 securityMonitorScene.background = new THREE.Color(0x071016);
@@ -95,6 +98,8 @@ let sunDisk;
 let moonDisk;
 let starField;
 let streetLightBulbMaterial;
+let sharedCarBodyGeometry;
+let sharedCarCabinGeometry;
 
 const ROAD_HALF = 7.2;
 const TRAFFIC_LANE_MAGNITUDES = [1.75, 5.25];
@@ -263,9 +268,10 @@ function init() {
   scene.add(moonLight);
   createSkyCycleObjects();
 
+  const groundTexture = createGroundTexture();
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(460, 460),
-    new THREE.MeshStandardMaterial({ color: 0x4b8b5a, roughness: 0.95 }),
+    new THREE.MeshStandardMaterial({ color: 0x6f9a67, map: groundTexture, roughness: 1 }),
   );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
@@ -318,6 +324,98 @@ function init() {
   loadingEl.hidden = true;
 }
 
+function createGroundTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 256;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#668c60";
+  context.fillRect(0, 0, 256, 256);
+  let seed = 9127;
+  for (let i = 0; i < 2600; i++) {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    const x = seed & 255;
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    const y = seed & 255;
+    const shade = 72 + (seed % 38);
+    context.fillStyle = `rgba(${shade - 18}, ${shade + 35}, ${shade - 10}, 0.28)`;
+    context.fillRect(x, y, 1 + (seed % 2), 1 + ((seed >> 2) % 2));
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(36, 36);
+  texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  return texture;
+}
+
+function createFacadeTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#c8b9a8";
+  context.fillRect(0, 0, 256, 256);
+  context.fillStyle = "rgba(50, 43, 38, 0.18)";
+  for (let y = 0; y < 256; y += 16) context.fillRect(0, y, 256, 1);
+  for (let y = 22; y < 245; y += 48) {
+    for (let x = 18; x < 246; x += 48) {
+      context.fillStyle = "#385266";
+      context.fillRect(x, y, 28, 27);
+      context.fillStyle = "rgba(166, 213, 235, 0.35)";
+      context.fillRect(x + 3, y + 3, 11, 20);
+      context.fillStyle = "rgba(20, 28, 32, 0.35)";
+      context.fillRect(x + 15, y + 3, 10, 20);
+    }
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(1.4, 2.5);
+  texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  return texture;
+}
+
+function roundedBoxGeometry(width, height, depth, radius = 0.15, bevel = 0.06) {
+  const halfWidth = width / 2;
+  const halfHeight = height / 2;
+  const corner = Math.min(radius, halfWidth, halfHeight);
+  const shape = new THREE.Shape();
+  shape.moveTo(-halfWidth + corner, -halfHeight);
+  shape.lineTo(halfWidth - corner, -halfHeight);
+  shape.quadraticCurveTo(halfWidth, -halfHeight, halfWidth, -halfHeight + corner);
+  shape.lineTo(halfWidth, halfHeight - corner);
+  shape.quadraticCurveTo(halfWidth, halfHeight, halfWidth - corner, halfHeight);
+  shape.lineTo(-halfWidth + corner, halfHeight);
+  shape.quadraticCurveTo(-halfWidth, halfHeight, -halfWidth, halfHeight - corner);
+  shape.lineTo(-halfWidth, -halfHeight + corner);
+  shape.quadraticCurveTo(-halfWidth, -halfHeight, -halfWidth + corner, -halfHeight);
+  const geometry = new THREE.ExtrudeGeometry(shape, {
+    depth: Math.max(0.02, depth - bevel * 2),
+    bevelEnabled: bevel > 0,
+    bevelSegments: 2,
+    steps: 1,
+    bevelSize: bevel,
+    bevelThickness: bevel,
+    curveSegments: 4,
+  });
+  geometry.translate(0, 0, -depth / 2 + bevel);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function carCabinGeometry() {
+  const vertices = new Float32Array([
+    -0.84, -0.39, -0.98,  0.84, -0.39, -0.98,  0.84, -0.39, 0.98, -0.84, -0.39, 0.98,
+    -0.65,  0.39, -0.68,  0.65,  0.39, -0.68,  0.58,  0.39, 0.57, -0.58,  0.39, 0.57,
+  ]);
+  const indices = [0,2,1, 0,3,2, 4,5,6, 4,6,7, 0,1,5, 0,5,4, 1,2,6, 1,6,5, 2,3,7, 2,7,6, 3,0,4, 3,4,7];
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 function setupIntro() {
   if (!state.introActive) return;
   const revealDelay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 50 : 2850;
@@ -332,7 +430,7 @@ function setupIntro() {
 }
 
 function createRoads() {
-  const asphalt = new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.82 });
+  const asphalt = new THREE.MeshStandardMaterial({ color: 0x25282a, roughness: 0.96, metalness: 0.01 });
   const centerStripe = new THREE.MeshStandardMaterial({ color: 0xf3c62f, roughness: 0.7 });
   const laneStripe = new THREE.MeshStandardMaterial({ color: 0xf5f5ed, roughness: 0.7 });
   const crosswalk = new THREE.MeshStandardMaterial({ color: 0xe9ece8, roughness: 0.75 });
@@ -566,8 +664,8 @@ function addPlayerLaneSegments(axis, fixed, material) {
 }
 
 function createBlocks() {
-  const sidewalkMat = new THREE.MeshStandardMaterial({ color: 0xbfc5b8, roughness: 0.86 });
-  const glassMat = new THREE.MeshStandardMaterial({ color: 0x86a7bf, roughness: 0.45, metalness: 0.08 });
+  const sidewalkMat = new THREE.MeshStandardMaterial({ color: 0xb8b7ad, roughness: 0.92 });
+  const facadeTexture = createFacadeTexture();
 
   for (let xi = 0; xi < GRID.length - 1; xi++) {
     for (let zi = 0; zi < GRID.length - 1; zi++) {
@@ -587,20 +685,23 @@ function createBlocks() {
         const bz = cz;
         const mat = new THREE.MeshStandardMaterial({
           color: new THREE.Color().setHSL(0.07 + ((xi + zi + i) % 5) * 0.055, 0.25, 0.45),
-          roughness: 0.68,
+          map: facadeTexture,
+          roughness: 0.78,
         });
-        const tower = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+        const tower = new THREE.Mesh(roundedBoxGeometry(w, h, d, 0.28, 0.1), mat);
         tower.position.set(bx, h / 2 + 0.2, bz);
         tower.castShadow = true;
         tower.receiveShadow = true;
         buildings.add(tower);
         buildingObstacles.push({ x: bx, z: bz, halfX: w / 2 + 0.1, halfZ: d / 2 + 0.1 });
 
-        for (let y = 2.2; y < h - 1; y += 2.6) {
-          const win = new THREE.Mesh(new THREE.BoxGeometry(w + 0.04, 0.55, 0.08), glassMat);
-          win.position.set(bx, y, bz - d / 2 - 0.05);
-          buildings.add(win);
-        }
+        const roofTrim = new THREE.Mesh(
+          roundedBoxGeometry(w + 0.28, 0.28, d + 0.28, 0.16, 0.05),
+          new THREE.MeshStandardMaterial({ color: 0x3c4143, roughness: 0.72 }),
+        );
+        roofTrim.position.set(bx, h + 0.3, bz);
+        roofTrim.castShadow = true;
+        buildings.add(roofTrim);
       }
     }
   }
@@ -1412,23 +1513,46 @@ function spawnBot(start) {
 
 function makeCar(color, isPlayer) {
   const car = new THREE.Group();
-  const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.42, metalness: 0.08 });
-  const cabinMat = new THREE.MeshStandardMaterial({ color: 0x1e3945, roughness: 0.24, metalness: 0.08 });
+  sharedCarBodyGeometry ||= roundedBoxGeometry(2.35, 0.72, 4.1, 0.3, 0.12);
+  sharedCarCabinGeometry ||= carCabinGeometry();
+  const bodyMat = new THREE.MeshPhysicalMaterial({
+    color,
+    roughness: 0.27,
+    metalness: 0.18,
+    clearcoat: 0.9,
+    clearcoatRoughness: 0.14,
+  });
+  const cabinMat = new THREE.MeshPhysicalMaterial({
+    color: 0x172b35,
+    roughness: 0.08,
+    metalness: 0.08,
+    clearcoat: 1,
+    clearcoatRoughness: 0.06,
+  });
   const tireMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 });
   const lightMat = new THREE.MeshStandardMaterial({ color: 0xffd166, emissive: 0xffa400, emissiveIntensity: 0 });
   const headlightMat = new THREE.MeshStandardMaterial({ color: 0xb9b59f, emissive: 0xfff0b0, emissiveIntensity: 0.12 });
   const brakeMat = new THREE.MeshStandardMaterial({ color: 0x9d1010, emissive: 0xff1515, emissiveIntensity: 0.12 });
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(2.35, 0.72, 4.1), bodyMat);
+  const body = new THREE.Mesh(sharedCarBodyGeometry, bodyMat);
   body.position.y = 0.65;
   body.castShadow = true;
   body.receiveShadow = true;
   car.add(body);
 
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.65, 0.78, 1.8), cabinMat);
+  const cabin = new THREE.Mesh(sharedCarCabinGeometry, cabinMat);
   cabin.position.set(0, 1.25, -0.25);
   cabin.castShadow = true;
   car.add(cabin);
+
+  if (isPlayer) {
+    const bumperMat = new THREE.MeshStandardMaterial({ color: 0x25282a, roughness: 0.58, metalness: 0.32 });
+    for (const z of [-2.08, 2.08]) {
+      const bumper = new THREE.Mesh(roundedBoxGeometry(2.08, 0.16, 0.12, 0.06, 0.025), bumperMat);
+      bumper.position.set(0, 0.42, z);
+      car.add(bumper);
+    }
+  }
 
   const headlights = [];
   for (const x of [-0.58, 0.58]) {
@@ -1475,6 +1599,15 @@ function makeCar(color, isPlayer) {
     wheel.position.set(x, 0.33, z);
     wheel.castShadow = true;
     car.add(wheel);
+    if (isPlayer) {
+      const rim = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.18, 0.18, 0.292, 16),
+        new THREE.MeshStandardMaterial({ color: 0x9aa1a4, roughness: 0.25, metalness: 0.78 }),
+      );
+      rim.rotation.z = Math.PI / 2;
+      rim.position.set(x, 0.33, z);
+      car.add(rim);
+    }
   }
 
   if (isPlayer) {
