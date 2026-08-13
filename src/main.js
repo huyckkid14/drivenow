@@ -794,6 +794,8 @@ function createPlayer() {
     hazard: false,
     blink: 0,
     steer: 0,
+    throttlePressure: 0,
+    brakePressure: 0,
     braking: false,
     velocity: new THREE.Vector3(),
     angularVelocity: 0,
@@ -1992,7 +1994,8 @@ function updatePlayer(dt) {
   }
 
   const damage = data.limpMode ? THREE.MathUtils.clamp(data.driveDamage || 0.35, 0.35, 1) : 0;
-  const handbrake = keys.has("space") && Math.abs(data.speed) > 7;
+  const absoluteSpeed = Math.abs(data.speed);
+  const handbrake = keys.has("space") && absoluteSpeed > 7;
   const stationaryRev = Boolean(throttle && brakeKey && Math.abs(data.speed) < 0.35);
   data.revRatio = moveToward(data.revRatio || 0, stationaryRev ? 1 : 0, dt * (stationaryRev ? 2.8 : 4.5));
   if (stationaryRev) {
@@ -2008,36 +2011,52 @@ function updatePlayer(dt) {
   const damagedPull = damage
     ? (data.damagePull || 1) * damage * 0.12 + Math.sin(state.time * 2.4) * damage * 0.1
     : 0;
-  data.steer = moveToward(data.steer, THREE.MathUtils.clamp(steerInput + damagedPull, -1, 1), dt * (4.8 - damage * 1.9));
+  const steeringRatio = THREE.MathUtils.lerp(1, 0.38, THREE.MathUtils.smoothstep(absoluteSpeed, 7, 28));
+  const steeringTarget = THREE.MathUtils.clamp((steerInput + damagedPull) * steeringRatio, -1, 1);
+  const steeringRate = steerInput ? THREE.MathUtils.lerp(5.8, 3.5, absoluteSpeed / Math.max(1, data.maxSpeed)) : 7.4;
+  data.steer = moveToward(data.steer, steeringTarget, dt * steeringRate * (1 - damage * 0.36));
   data.driftRatio = moveToward(data.driftRatio || 0, handbrake ? 1 : 0, dt * (handbrake ? 4.2 : 2.6));
 
   const damagedPowerPulse = damage ? 0.48 + (Math.sin(state.time * 7.2) * 0.5 + 0.5) * 0.3 : 1;
-  const accel = stationaryRev ? 0 : throttle * 18 * (1 - damage * 0.62) * damagedPowerPulse;
-  const brake = stationaryRev ? 0 : brakeKey * 34 * (1 - damage * 0.38);
-  const drag = 4.2 + Math.abs(data.speed) * 0.1 + damage * 1.8;
+  data.throttlePressure = moveToward(data.throttlePressure || 0, throttle, dt * (throttle ? 2.8 : 5.6));
+  data.brakePressure = moveToward(data.brakePressure || 0, brakeKey, dt * (brakeKey ? 5.8 : 8.5));
+  const speedRatio = THREE.MathUtils.clamp(absoluteSpeed / Math.max(1, data.maxSpeed), 0, 1);
+  const driveForce = 20.5 * (1 - speedRatio * 0.7) + 3.2;
+  const accel = stationaryRev ? 0 : data.throttlePressure * driveForce * (1 - damage * 0.62) * damagedPowerPulse;
+  const brake = stationaryRev ? 0 : data.brakePressure * THREE.MathUtils.lerp(39, 28, speedRatio) * (1 - damage * 0.38);
+  const rollingResistance = 0.85 + damage * 1.5;
+  const aerodynamicDrag = absoluteSpeed * absoluteSpeed * 0.012;
+  const engineBraking = !throttle && !brakeKey ? 1.15 + absoluteSpeed * 0.045 : 0;
   const changingDirection = throttle && data.speed * gearDirection < -0.2;
-  data.braking = Boolean(brakeKey || changingDirection || (!throttle && Math.abs(data.speed) > 4));
+  data.braking = Boolean(data.brakePressure > 0.08 || changingDirection);
   if (!stationaryRev) {
-    if (changingDirection) data.speed = moveToward(data.speed, 0, 34 * dt);
+    if (changingDirection) data.speed = moveToward(data.speed, 0, (24 + data.brakePressure * 15) * dt);
     else data.speed += gearDirection * accel * dt;
     if (brakeKey) data.speed = moveToward(data.speed, 0, brake * dt);
   }
-  if (!throttle && !brakeKey) data.speed -= Math.sign(data.speed) * drag * dt;
+  if (!throttle && !brakeKey && absoluteSpeed > 0) {
+    data.speed = moveToward(data.speed, 0, (rollingResistance + aerodynamicDrag + engineBraking) * dt);
+  }
   if (Math.abs(data.speed) < 0.1) data.speed = 0;
   const damagedMaxSpeed = damage ? THREE.MathUtils.lerp(15, 7, damage) : data.maxSpeed;
   data.speed = THREE.MathUtils.clamp(data.speed, damage ? -5.5 : -11, damagedMaxSpeed);
 
   if (Math.abs(data.speed) > 0.4) {
-    const speedFactor = THREE.MathUtils.clamp(Math.abs(data.speed) / data.maxSpeed, 0.18, 1);
-    car.rotation.y += data.steer * dt * (1.18 + speedFactor * 1.25) * Math.sign(data.speed || 1);
-    if (handbrake) car.rotation.y += data.steer * dt * 1.65 * speedFactor * Math.sign(data.speed);
+    const speedFactor = THREE.MathUtils.clamp(Math.abs(data.speed) / data.maxSpeed, 0.08, 1);
+    const wheelAngle = data.steer * THREE.MathUtils.degToRad(31);
+    const bicycleYawRate = Math.tan(wheelAngle) * Math.abs(data.speed) / 3.05;
+    const gripYawLimit = THREE.MathUtils.lerp(1.55, 0.82, speedFactor) * (1 - data.driftRatio * 0.35);
+    const yawRate = THREE.MathUtils.clamp(bicycleYawRate, -gripYawLimit, gripYawLimit);
+    car.rotation.y += yawRate * dt * Math.sign(data.speed || 1);
+    if (handbrake) car.rotation.y += data.steer * dt * 1.35 * speedFactor * Math.sign(data.speed);
   }
 
   const forward = getForward(car);
   const previous = car.position.clone();
   const desiredVelocity = forward.multiplyScalar(data.speed);
   if (data.velocity.lengthSq() < 0.01) data.velocity.copy(desiredVelocity);
-  const grip = THREE.MathUtils.lerp(10, 0.85, data.driftRatio) * (1 - damage * 0.5);
+  const corneringLoad = THREE.MathUtils.clamp(Math.abs(data.steer) * absoluteSpeed / 18, 0, 1);
+  const grip = THREE.MathUtils.lerp(9.5, 6.2, corneringLoad) * THREE.MathUtils.lerp(1, 0.11, data.driftRatio) * (1 - damage * 0.5);
   data.velocity.lerp(desiredVelocity, Math.min(1, grip * dt));
   if (handbrake) {
     data.speed = moveToward(data.speed, 0, dt * (1.7 + Math.abs(data.steer) * 2.4));
@@ -2182,6 +2201,8 @@ function finishCarStep(transition) {
   person.userData.velocity.set(0, 0, 0);
   person.userData.speed = 0;
   person.userData.steer = 0;
+  state.player.userData.throttlePressure = 0;
+  state.player.userData.brakePressure = 0;
   person.visible = false;
   state.carBeacon.visible = false;
   statusEl.textContent = "Back in the car";
