@@ -917,6 +917,7 @@ function createPlayer() {
     driverDoor: player.userData.driverDoor,
     body: player.userData.body,
     cabin: player.userData.cabin,
+    exteriorMirrors: player.userData.exteriorMirrors,
     playerMarker: player.userData.playerMarker,
     wheels: player.userData.wheels,
   };
@@ -933,15 +934,33 @@ function createCockpitInterior(car) {
   cockpit.visible = false;
   const trim = new THREE.MeshStandardMaterial({ color: 0x111619, roughness: 0.72, side: THREE.DoubleSide });
   const softTrim = new THREE.MeshStandardMaterial({ color: 0x252d31, roughness: 0.9, side: THREE.DoubleSide });
+  const leather = new THREE.MeshPhysicalMaterial({ color: 0x171a1c, roughness: 0.68, clearcoat: 0.16, clearcoatRoughness: 0.72 });
+  const brushedMetal = new THREE.MeshStandardMaterial({ color: 0x8b9295, roughness: 0.3, metalness: 0.76 });
+  const pianoBlack = new THREE.MeshPhysicalMaterial({ color: 0x050708, roughness: 0.12, clearcoat: 1, clearcoatRoughness: 0.08 });
+  const stitchMaterial = new THREE.MeshBasicMaterial({ color: 0xc7c1ad });
   const glass = new THREE.MeshStandardMaterial({ color: 0x9fc9db, transparent: true, opacity: 0.08, roughness: 0.08, side: THREE.DoubleSide });
 
-  const dashboard = new THREE.Mesh(new THREE.BoxGeometry(2.18, 0.28, 0.72), trim);
-  dashboard.position.set(0, 1.05, 0.73);
+  const dashboard = new THREE.Mesh(roundedBoxGeometry(2.18, 0.31, 0.74, 0.13, 0.045), leather);
+  dashboard.position.set(0, 0.78, 0.73);
+  const dashboardBrow = new THREE.Mesh(roundedBoxGeometry(2.05, 0.13, 0.48, 0.08, 0.03), softTrim);
+  dashboardBrow.position.set(0, 0.96, 0.69);
+  dashboardBrow.rotation.x = -0.05;
+  const lowerDashboard = new THREE.Mesh(roundedBoxGeometry(2.12, 0.38, 0.22, 0.08, 0.035), trim);
+  lowerDashboard.position.set(0, 0.57, 0.55);
   const roof = new THREE.Mesh(new THREE.BoxGeometry(2.15, 0.13, 1.95), softTrim);
   roof.position.set(0, 2.18, -0.05);
   const windshield = new THREE.Mesh(new THREE.PlaneGeometry(1.84, 0.86), glass);
   windshield.position.set(0, 1.67, 0.86);
   windshield.rotation.x = -0.12;
+  const cockpitHoodMaterial = new THREE.MeshPhysicalMaterial({
+    color: 0xffd23f,
+    roughness: 0.28,
+    metalness: 0.16,
+    clearcoat: 0.85,
+    clearcoatRoughness: 0.16,
+  });
+  const cockpitHood = new THREE.Mesh(roundedBoxGeometry(2.05, 0.12, 1.38, 0.12, 0.035), cockpitHoodMaterial);
+  cockpitHood.position.set(0, 0.77, 1.32);
   for (const [x, tilt] of [[-0.96, -0.12], [0.96, 0.12]]) {
     const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.9, 0.15), softTrim);
     pillar.position.set(x, 1.69, 0.78);
@@ -953,11 +972,97 @@ function createCockpitInterior(car) {
     new THREE.TorusGeometry(0.24, 0.035, 12, 32),
     new THREE.MeshStandardMaterial({ color: 0x07090a, roughness: 0.65, side: THREE.DoubleSide }),
   );
-  wheel.position.set(0.38, 1.18, 0.32);
+  wheel.scale.setScalar(0.76);
+  wheel.position.set(0.38, 1.1, 0.22);
   wheel.rotation.x = -0.14;
   const wheelHub = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.08, 20), trim);
-  wheelHub.position.set(0.38, 1.18, 0.3);
+  wheelHub.position.set(0.38, 1.1, 0.2);
   wheelHub.rotation.x = Math.PI / 2;
+  const wheelSpokes = new THREE.Group();
+  for (const angle of [-2.35, -0.79, Math.PI / 2]) {
+    const spoke = new THREE.Mesh(roundedBoxGeometry(0.19, 0.055, 0.045, 0.025, 0.01), softTrim);
+    spoke.position.set(0.38 + Math.cos(angle) * 0.08, 1.1 + Math.sin(angle) * 0.08, 0.185);
+    spoke.rotation.z = angle;
+    spoke.rotation.x = -0.14;
+    wheelSpokes.add(spoke);
+  }
+  const steeringColumn = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 0.34, 16), softTrim);
+  steeringColumn.position.set(0.38, 1.0, 0.38);
+  steeringColumn.rotation.x = Math.PI / 2 - 0.18;
+
+  const cockpitDetail = new THREE.Group();
+  const ventLocations = [0.82, -0.82];
+  for (const x of ventLocations) {
+    const ventRing = new THREE.Mesh(new THREE.TorusGeometry(0.105, 0.018, 8, 24), brushedMetal);
+    ventRing.position.set(x, 1.22, 0.345);
+    const ventDark = new THREE.Mesh(new THREE.CircleGeometry(0.088, 24), pianoBlack);
+    ventDark.position.set(x, 1.22, 0.342);
+    ventDark.rotation.y = Math.PI;
+    cockpitDetail.add(ventRing, ventDark);
+    for (const offset of [-0.045, 0, 0.045]) {
+      const slat = new THREE.Mesh(new THREE.BoxGeometry(0.145, 0.008, 0.008), brushedMetal);
+      slat.position.set(x, 1.22 + offset, 0.337);
+      cockpitDetail.add(slat);
+    }
+  }
+
+  const centerStack = new THREE.Mesh(roundedBoxGeometry(0.58, 0.68, 0.1, 0.07, 0.02), pianoBlack);
+  centerStack.position.set(-0.42, 0.91, 0.39);
+  cockpitDetail.add(centerStack);
+  for (const x of [-0.55, -0.42, -0.29]) {
+    const climateKnob = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.025, 20), brushedMetal);
+    climateKnob.rotation.x = Math.PI / 2;
+    climateKnob.position.set(x, 0.78, 0.325);
+    cockpitDetail.add(climateKnob);
+  }
+  for (let i = 0; i < 5; i++) {
+    const button = new THREE.Mesh(roundedBoxGeometry(0.07, 0.035, 0.018, 0.012, 0.004), softTrim);
+    button.position.set(-0.58 + i * 0.08, 0.88, 0.326);
+    cockpitDetail.add(button);
+  }
+
+  const console = new THREE.Mesh(roundedBoxGeometry(0.58, 0.19, 1.35, 0.1, 0.035), leather);
+  console.position.set(-0.35, 0.66, -0.16);
+  cockpitDetail.add(console);
+  const cupHolderMaterial = new THREE.MeshStandardMaterial({ color: 0x030405, roughness: 0.5 });
+  for (const z of [-0.48, -0.74]) {
+    const cupHolder = new THREE.Mesh(new THREE.TorusGeometry(0.105, 0.018, 8, 24), brushedMetal);
+    cupHolder.rotation.x = Math.PI / 2;
+    cupHolder.position.set(-0.34, 0.77, z);
+    const cupWell = new THREE.Mesh(new THREE.CircleGeometry(0.088, 24), cupHolderMaterial);
+    cupWell.rotation.x = -Math.PI / 2;
+    cupWell.position.set(-0.34, 0.764, z);
+    cockpitDetail.add(cupHolder, cupWell);
+  }
+
+  let interiorDriverDoor = null;
+  for (const side of [-1, 1]) {
+    const doorPanel = new THREE.Mesh(roundedBoxGeometry(0.1, 0.67, 1.36, 0.05, 0.025), leather);
+    const doorInsert = new THREE.Mesh(roundedBoxGeometry(0.022, 0.2, 0.72, 0.04, 0.008), softTrim);
+    const doorHandle = new THREE.Mesh(roundedBoxGeometry(0.025, 0.055, 0.32, 0.02, 0.006), brushedMetal);
+    if (side > 0) {
+      // The driver's interior trim must share a forward hinge so it visibly
+      // swings with the exterior door while the camera is still in the car.
+      interiorDriverDoor = new THREE.Group();
+      interiorDriverDoor.position.set(1.045, 0, 0.52);
+      doorPanel.position.set(0, 1.0, -0.68);
+      doorInsert.position.set(-0.06, 1.12, -0.64);
+      doorHandle.position.set(-0.08, 1.23, -0.46);
+      interiorDriverDoor.add(doorPanel, doorInsert, doorHandle);
+      cockpitDetail.add(interiorDriverDoor);
+    } else {
+      doorPanel.position.set(side * 1.045, 1.0, -0.16);
+      doorInsert.position.set(side * 0.985, 1.12, -0.12);
+      doorHandle.position.set(side * 0.965, 1.23, 0.06);
+      cockpitDetail.add(doorPanel, doorInsert, doorHandle);
+    }
+  }
+
+  for (const x of [-0.84, -0.56, -0.28, 0, 0.28, 0.56, 0.84]) {
+    const stitch = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.006, 0.008), stitchMaterial);
+    stitch.position.set(x, 1.205, 0.365);
+    cockpitDetail.add(stitch);
+  }
 
   const displayCanvas = document.createElement("canvas");
   displayCanvas.width = 512;
@@ -970,7 +1075,8 @@ function createCockpitInterior(car) {
     new THREE.PlaneGeometry(0.64, 0.3),
     displayMaterial,
   );
-  display.position.set(-0.08, 1.23, 0.355);
+  display.scale.set(0.62, 0.62, 1);
+  display.position.set(-0.08, 1.24, 0.295);
   display.rotation.y = Math.PI;
 
   const reverseWarningCanvas = document.createElement("canvas");
@@ -982,7 +1088,8 @@ function createCockpitInterior(car) {
     new THREE.PlaneGeometry(0.64, 0.3),
     new THREE.MeshBasicMaterial({ map: reverseWarningTexture, transparent: true, depthTest: false, side: THREE.DoubleSide }),
   );
-  reverseWarning.position.set(-0.08, 1.23, 0.349);
+  reverseWarning.scale.set(0.62, 0.62, 1);
+  reverseWarning.position.set(-0.08, 1.24, 0.289);
   reverseWarning.rotation.y = Math.PI;
   reverseWarning.renderOrder = 20;
 
@@ -995,8 +1102,16 @@ function createCockpitInterior(car) {
     new THREE.PlaneGeometry(0.42, 0.19),
     new THREE.MeshBasicMaterial({ map: clusterTexture, side: THREE.DoubleSide }),
   );
-  cluster.position.set(0.38, 1.32, 0.345);
+  cluster.scale.set(0.66, 0.66, 1);
+  cluster.position.set(0.38, 1.28, 0.285);
   cluster.rotation.y = Math.PI;
+  const clusterHood = new THREE.Mesh(roundedBoxGeometry(0.58, 0.26, 0.18, 0.08, 0.025), leather);
+  clusterHood.scale.set(0.7, 0.7, 1);
+  clusterHood.position.set(0.38, 1.27, 0.39);
+
+  const screenBezel = new THREE.Mesh(roundedBoxGeometry(0.76, 0.4, 0.08, 0.055, 0.018), pianoBlack);
+  screenBezel.scale.set(0.61, 0.61, 1);
+  screenBezel.position.set(-0.08, 1.24, 0.35);
 
   const shifter = new THREE.Group();
   const shifterBase = new THREE.Mesh(
@@ -1071,17 +1186,48 @@ function createCockpitInterior(car) {
   infotainment.position.set(-0.72, 1.18, 0.36);
   infotainment.rotation.y = Math.PI;
 
+  const pedals = new THREE.Group();
+  for (const [x, width] of [[0.28, 0.11], [0.48, 0.08]]) {
+    const pedalArm = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.24, 0.025), brushedMetal);
+    pedalArm.position.set(x, 0.42, 0.39);
+    pedalArm.rotation.x = -0.18;
+    const pedal = new THREE.Mesh(roundedBoxGeometry(width, 0.1, 0.035, 0.018, 0.008), softTrim);
+    pedal.position.set(x, 0.31, 0.35);
+    pedal.rotation.x = -0.28;
+    pedals.add(pedalArm, pedal);
+  }
+
+  const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x090b0c, roughness: 1, side: THREE.DoubleSide });
+  const floor = new THREE.Mesh(roundedBoxGeometry(2.08, 0.08, 3.2, 0.08, 0.02), floorMaterial);
+  floor.position.set(0, 0.2, -0.28);
+  const footwell = new THREE.Mesh(roundedBoxGeometry(2.08, 0.78, 0.12, 0.05, 0.02), floorMaterial);
+  footwell.position.set(0, 0.52, 0.82);
+  const seatBase = new THREE.Mesh(roundedBoxGeometry(0.86, 0.2, 0.82, 0.11, 0.035), leather);
+  seatBase.position.set(0.38, 0.34, -0.72);
+  const cabinTub = new THREE.Group();
+  for (const side of [-1, 1]) {
+    const sill = new THREE.Mesh(roundedBoxGeometry(0.16, 0.42, 3.05, 0.06, 0.02), floorMaterial);
+    sill.position.set(side * 0.96, 0.4, -0.22);
+    cabinTub.add(sill);
+  }
+  const rearBulkhead = new THREE.Mesh(roundedBoxGeometry(2.05, 1.25, 0.14, 0.07, 0.025), floorMaterial);
+  rearBulkhead.position.set(0, 0.72, -1.58);
+  const transmissionTunnel = new THREE.Mesh(roundedBoxGeometry(0.42, 0.3, 2.65, 0.1, 0.035), leather);
+  transmissionTunnel.position.set(-0.28, 0.36, -0.22);
+  cabinTub.add(rearBulkhead, transmissionTunnel);
+
   const mirrorMaterialLeft = new THREE.MeshBasicMaterial({ map: leftMirrorTarget.texture, side: THREE.DoubleSide });
   const mirrorMaterialRight = new THREE.MeshBasicMaterial({ map: rightMirrorTarget.texture, side: THREE.DoubleSide });
   const blindSpotIcons = {};
+  const exteriorMirrors = new THREE.Group();
   for (const spec of [
-    { side: "left", x: 1.34, material: mirrorMaterialLeft },
-    { side: "right", x: -1.05, material: mirrorMaterialRight },
+    { side: "left", x: 1.5, material: mirrorMaterialLeft },
+    { side: "right", x: -1.5, material: mirrorMaterialRight },
   ]) {
-    const housing = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.34, 0.12), trim);
-    housing.position.set(spec.x, 1.36, 0.68);
-    const mirror = new THREE.Mesh(new THREE.PlaneGeometry(0.53, 0.26), spec.material);
-    mirror.position.set(spec.x, 1.36, 0.61);
+    const housing = new THREE.Mesh(roundedBoxGeometry(0.56, 0.3, 0.12, 0.07, 0.02), trim);
+    housing.position.set(spec.x, 1.42, 0.84);
+    const mirror = new THREE.Mesh(new THREE.PlaneGeometry(0.48, 0.23), spec.material);
+    mirror.position.set(spec.x, 1.42, 0.775);
     mirror.rotation.y = Math.PI;
     const warningIcon = new THREE.Group();
     const warningShape = new THREE.Shape();
@@ -1104,26 +1250,31 @@ function createCockpitInterior(car) {
     );
     warningDot.position.set(0, -0.023, 0.002);
     warningIcon.add(warningTriangle, warningBar, warningDot);
-    warningIcon.position.set(spec.x + Math.sign(spec.x) * 0.17, 1.4, 0.59);
+    warningIcon.position.set(spec.x + Math.sign(spec.x) * 0.15, 1.46, 0.765);
     warningIcon.rotation.y = Math.PI;
     warningIcon.renderOrder = 25;
     warningIcon.visible = false;
     blindSpotIcons[spec.side] = warningIcon;
-    cockpit.add(housing, mirror, warningIcon);
+    const mirrorStem = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.04, 0.32, 10), trim);
+    mirrorStem.position.set(spec.x - Math.sign(spec.x) * 0.16, 1.25, 0.86);
+    mirrorStem.rotation.z = Math.sign(spec.x) * 0.68;
+    exteriorMirrors.add(housing, mirror, warningIcon, mirrorStem);
   }
 
-  const rearviewHousing = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.16, 0.1), trim);
-  rearviewHousing.position.set(0, 2.01, 0.46);
+  const rearviewHousing = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.08), trim);
+  rearviewHousing.position.set(0.34, 1.98, 0.73);
   const rearviewMirror = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.4, 0.105),
+    new THREE.PlaneGeometry(0.44, 0.115),
     new THREE.MeshBasicMaterial({ map: rearviewTarget.texture, side: THREE.DoubleSide }),
   );
-  rearviewMirror.position.set(0, 2.01, 0.4);
+  rearviewMirror.position.set(0.34, 1.98, 0.685);
   rearviewMirror.rotation.y = Math.PI;
   const rearviewStem = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.12, 0.06), trim);
-  rearviewStem.position.set(0, 2.11, 0.5);
+  rearviewStem.position.set(0.34, 2.08, 0.77);
 
-  cockpit.add(dashboard, roof, windshield, wheel, wheelHub, display, reverseWarning, cluster, infotainment, shifter,
+  cockpit.add(dashboard, dashboardBrow, lowerDashboard, roof, windshield, cockpitHood, wheel, wheelHub, wheelSpokes, steeringColumn,
+    cockpitDetail, screenBezel, display, reverseWarning, clusterHood, cluster, infotainment, shifter, pedals,
+    floor, footwell, seatBase, cabinTub,
     rearviewHousing, rearviewMirror, rearviewStem);
   cockpit.userData.displayCanvas = displayCanvas;
   cockpit.userData.displayTexture = displayTexture;
@@ -1136,8 +1287,11 @@ function createCockpitInterior(car) {
   cockpit.userData.shifterLever = shifterLever;
   cockpit.userData.backupGuides = backupGuides;
   cockpit.userData.blindSpotIcons = blindSpotIcons;
-  car.add(cockpit);
+  cockpit.userData.hood = cockpitHood;
+  cockpit.userData.driverDoor = interiorDriverDoor;
+  car.add(cockpit, exteriorMirrors);
   car.userData.cockpit = cockpit;
+  car.userData.exteriorMirrors = exteriorMirrors;
   updateCockpitDisplay(0, 900);
 }
 
@@ -2021,6 +2175,7 @@ function renderCockpitMirrors() {
   const shadowUpdates = renderer.shadowMap.autoUpdate;
   renderer.shadowMap.autoUpdate = false;
   cockpit.visible = false;
+  if (car.userData.exteriorMirrors) car.userData.exteriorMirrors.visible = false;
   for (const spec of [
     { view: leftMirrorCamera, target: leftMirrorTarget, x: 1.34, outward: 3.2 },
     { view: rightMirrorCamera, target: rightMirrorTarget, x: -1.34, outward: -3.2 },
@@ -2043,6 +2198,7 @@ function renderCockpitMirrors() {
     cockpit.userData.backupGuides.visible = false;
   }
   cockpit.visible = true;
+  if (car.userData.exteriorMirrors) car.userData.exteriorMirrors.visible = true;
   renderer.shadowMap.autoUpdate = shadowUpdates;
 }
 
@@ -2250,18 +2406,26 @@ function updateCarDoor(dt) {
   if (elapsed >= 0 && elapsed < 1.18) target = -1.05;
   const speed = target < 0 ? 3.2 : 2.25;
   door.rotation.y = moveToward(door.rotation.y, target, dt * speed);
+  const cockpitDoor = state.player.userData.cockpit?.userData.driverDoor;
+  if (cockpitDoor) cockpitDoor.rotation.y = door.rotation.y;
 
   const transition = state.carTransition;
   if (!transition) return;
-  const stepStart = 0.34;
-  const stepEnd = 1.12;
-  if (elapsed >= stepStart) {
-    if (!transition.started) beginCarStep(transition);
-    const progress = THREE.MathUtils.clamp((elapsed - stepStart) / (stepEnd - stepStart), 0, 1);
+  // Switch views only after the physical door has actually reached its fully
+  // open angle, independent of frame rate.
+  if (!transition.started && door.rotation.y <= -1.02) {
+    transition.stepStartedAt = state.time;
+    beginCarStep(transition);
+  }
+  if (transition.started) {
+    const progress = THREE.MathUtils.clamp((state.time - transition.stepStartedAt) / 0.78, 0, 1);
     animateCarStep(transition, progress);
     if (!transition.finished && progress >= 1) finishCarStep(transition);
   }
-  if (elapsed >= 1.7) state.carTransition = null;
+  if (elapsed >= 1.7) {
+    if (transition?.type === "enter") state.cameraView = 2;
+    state.carTransition = null;
+  }
 }
 
 function carDoorwayPoint(x, z) {
@@ -2326,7 +2490,6 @@ function finishCarStep(transition) {
   }
 
   state.onFoot = false;
-  state.cameraView = 2;
   state.gear = "drive";
   state.backupCameraActive = false;
   holsterPolicePistol();
@@ -2604,6 +2767,13 @@ function transferPlayerControl(target, message) {
     cockpit.visible = false;
     oldData.cockpit = null;
     targetData.cockpit = cockpit;
+  }
+  const exteriorMirrors = oldData.exteriorMirrors;
+  if (exteriorMirrors) {
+    oldPlayer.remove(exteriorMirrors);
+    target.add(exteriorMirrors);
+    oldData.exteriorMirrors = null;
+    targetData.exteriorMirrors = exteriorMirrors;
   }
   if (oldData.cabin) oldData.cabin.visible = true;
 
@@ -6581,7 +6751,8 @@ function setBrakeLights(lamps, active) {
 function updateCamera(dt) {
   const car = state.player;
   camera.up.set(0, 1, 0);
-  const targetFov = state.policePistolDrawn && keys.has("shift") ? 32 : 60;
+  const cockpitFov = state.cameraView === 2 && !state.onFoot && !state.policeInterview ? 70 : 60;
+  const targetFov = state.policePistolDrawn && keys.has("shift") ? 32 : cockpitFov;
   const nextFov = moveToward(camera.fov, targetFov, dt * 82);
   if (Math.abs(nextFov - camera.fov) > 0.001) {
     camera.fov = nextFov;
@@ -6636,7 +6807,7 @@ function updateCamera(dt) {
       ? new THREE.Vector3(0, 1.35, 32)
       : new THREE.Vector3(
           0.34 + Math.sin(state.cockpitLook.yaw) * 28,
-          1.48 - Math.sin(state.cockpitLook.pitch) * 28,
+          1.35 - Math.sin(state.cockpitLook.pitch) * 28,
           Math.cos(state.cockpitLook.yaw) * 28,
         );
     if (cockpitImpact) lookLocal.add(cockpitImpact.look);
@@ -6702,13 +6873,24 @@ function updateHud() {
   const dashboardVisible = state.cameraView === 2 && !state.onFoot && !state.securityRoom && !state.policeInterview;
   const playerData = state.player.userData;
   if (playerData.cockpit) playerData.cockpit.visible = dashboardVisible;
+  // The exterior shell intersects the eye-level cockpit model. Hide every
+  // exterior skin component in first person so only the true interior is seen.
+  if (playerData.body) playerData.body.visible = !dashboardVisible;
   if (playerData.cabin) playerData.cabin.visible = !dashboardVisible;
+  if (playerData.driverDoor) playerData.driverDoor.visible = !dashboardVisible || Boolean(state.carTransition);
+  for (const wheel of playerData.wheels || []) wheel.visible = !dashboardVisible;
+  for (const headlight of playerData.headlights || []) headlight.visible = !dashboardVisible;
+  for (const indicator of playerData.indicators || []) indicator.lamp.visible = !dashboardVisible;
+  for (const brakeLight of playerData.brakeLights || []) brakeLight.visible = !dashboardVisible;
   if (playerData.playerMarker) playerData.playerMarker.visible = !dashboardVisible;
   if (playerData.policeKit) playerData.policeKit.visible = !dashboardVisible;
   if (dashboardVisible) {
     const data = state.player.userData;
     state.backupCameraActive = state.gear === "reverse";
     const cockpit = data.cockpit;
+    if (cockpit.userData.hood && data.body?.material?.color) {
+      cockpit.userData.hood.material.color.copy(data.body.material.color);
+    }
     cockpit.userData.displayMaterial.map = state.backupCameraActive ? backupCameraTarget.texture : cockpit.userData.displayTexture;
     cockpit.userData.displayMaterial.needsUpdate = true;
     const speedRatio = THREE.MathUtils.clamp(Math.abs(data.speed || 0) / 36, 0, 1);
@@ -7112,7 +7294,9 @@ function onPointerMove(event) {
     const x = THREE.MathUtils.clamp(((event.clientX - rect.left) / rect.width) * 2 - 1, -1, 1);
     const y = THREE.MathUtils.clamp(((event.clientY - rect.top) / rect.height) * 2 - 1, -1, 1);
     state.cockpitLook.yaw = -x * 1.42;
-    state.cockpitLook.pitch = y * 0.34;
+    // At the bottom of the viewport, look fully into the sealed footwell
+    // instead of retaining a forward windshield view.
+    state.cockpitLook.pitch = y * 1.18;
     state.cockpitLook.lastMovedAt = state.time;
     return;
   }
