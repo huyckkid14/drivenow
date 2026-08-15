@@ -976,8 +976,8 @@ function createCockpitInterior(car) {
   hoodGeometry.computeVertexNormals();
   const cockpitHood = new THREE.Mesh(hoodGeometry, cockpitHoodMaterial);
   for (const [x, tilt] of [[-0.96, -0.12], [0.96, 0.12]]) {
-    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.9, 0.15), softTrim);
-    pillar.position.set(x, 1.69, 0.78);
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.13, 1.5, 0.15), softTrim);
+    pillar.position.set(x, 1.39, 0.78);
     pillar.rotation.z = tilt;
     cockpit.add(pillar);
   }
