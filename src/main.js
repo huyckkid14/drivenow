@@ -1202,14 +1202,21 @@ function createCockpitInterior(car) {
   infotainment.rotation.y = Math.PI;
 
   const pedals = new THREE.Group();
-  for (const [x, width] of [[0.28, 0.11], [0.48, 0.08]]) {
+  const pedalPivots = {};
+  // Positive cockpit X appears on the driver's left from this forward-facing
+  // camera, so the brake uses the larger X and the accelerator the smaller X.
+  for (const [name, x, width] of [["brake", 0.48, 0.11], ["accelerator", 0.28, 0.08]]) {
+    const pedalPivot = new THREE.Group();
+    pedalPivot.position.set(x, 0.54, 0.4);
     const pedalArm = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.24, 0.025), brushedMetal);
-    pedalArm.position.set(x, 0.42, 0.39);
+    pedalArm.position.set(0, -0.12, -0.01);
     pedalArm.rotation.x = -0.18;
     const pedal = new THREE.Mesh(roundedBoxGeometry(width, 0.1, 0.035, 0.018, 0.008), softTrim);
-    pedal.position.set(x, 0.31, 0.35);
+    pedal.position.set(0, -0.23, -0.05);
     pedal.rotation.x = -0.28;
-    pedals.add(pedalArm, pedal);
+    pedalPivot.add(pedalArm, pedal);
+    pedals.add(pedalPivot);
+    pedalPivots[name] = pedalPivot;
   }
 
   const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x090b0c, roughness: 1, side: THREE.DoubleSide });
@@ -1304,6 +1311,7 @@ function createCockpitInterior(car) {
   cockpit.userData.blindSpotIcons = blindSpotIcons;
   cockpit.userData.hood = cockpitHood;
   cockpit.userData.steeringWheel = steeringWheel;
+  cockpit.userData.pedalPivots = pedalPivots;
   cockpit.userData.driverDoor = interiorDriverDoor;
   car.add(cockpit, exteriorMirrors);
   car.userData.cockpit = cockpit;
@@ -6916,6 +6924,18 @@ function updateHud(dt = 1 / 60) {
         + (targetAngle - steeringWheel.rotation.z) * stiffness * dt;
       steeringWheel.userData.turnVelocity *= damping;
       steeringWheel.rotation.z += steeringWheel.userData.turnVelocity * dt;
+    }
+    if (cockpit.userData.pedalPivots) {
+      const animatePedal = (pedal, targetAngle) => {
+        const stiffness = 42;
+        const damping = Math.exp(-12 * dt);
+        pedal.userData.pressVelocity = (pedal.userData.pressVelocity || 0)
+          + (targetAngle - pedal.rotation.x) * stiffness * dt;
+        pedal.userData.pressVelocity *= damping;
+        pedal.rotation.x += pedal.userData.pressVelocity * dt;
+      };
+      animatePedal(cockpit.userData.pedalPivots.accelerator, -(data.throttlePressure || 0) * 0.3);
+      animatePedal(cockpit.userData.pedalPivots.brake, -(data.brakePressure || 0) * 0.36);
     }
     cockpit.userData.displayMaterial.map = state.backupCameraActive ? backupCameraTarget.texture : cockpit.userData.displayTexture;
     cockpit.userData.displayMaterial.needsUpdate = true;
