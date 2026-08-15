@@ -2324,9 +2324,11 @@ function updatePlayer(dt) {
   const damagedPull = damage
     ? (data.damagePull || 1) * damage * 0.12 + Math.sin(state.time * 2.4) * damage * 0.1
     : 0;
-  const steeringRatio = THREE.MathUtils.lerp(1, 0.38, THREE.MathUtils.smoothstep(absoluteSpeed, 7, 28));
+  // Road cars cannot hold full steering lock at speed. This gives parking-speed
+  // maneuverability while naturally widening the turning radius as speed builds.
+  const steeringRatio = THREE.MathUtils.lerp(1, 0.26, THREE.MathUtils.smoothstep(absoluteSpeed, 5, 27));
   const steeringTarget = THREE.MathUtils.clamp((steerInput + damagedPull) * steeringRatio, -1, 1);
-  const steeringRate = steerInput ? THREE.MathUtils.lerp(5.8, 3.5, absoluteSpeed / Math.max(1, data.maxSpeed)) : 7.4;
+  const steeringRate = steerInput ? THREE.MathUtils.lerp(4.8, 2.45, absoluteSpeed / Math.max(1, data.maxSpeed)) : 5.6;
   data.steer = moveToward(data.steer, steeringTarget, dt * steeringRate * (1 - damage * 0.36));
   data.driftRatio = moveToward(data.driftRatio || 0, handbrake ? 1 : 0, dt * (handbrake ? 4.2 : 2.6));
 
@@ -2337,9 +2339,14 @@ function updatePlayer(dt) {
   const driveForce = 20.5 * (1 - speedRatio * 0.7) + 3.2;
   const accel = stationaryRev ? 0 : data.throttlePressure * driveForce * (1 - damage * 0.62) * damagedPowerPulse;
   const brake = stationaryRev ? 0 : data.brakePressure * THREE.MathUtils.lerp(39, 28, speedRatio) * (1 - damage * 0.38);
-  const rollingResistance = 0.85 + damage * 1.5;
-  const aerodynamicDrag = absoluteSpeed * absoluteSpeed * 0.012;
-  const engineBraking = !throttle && !brakeKey ? 1.15 + absoluteSpeed * 0.045 : 0;
+  // A released accelerator should coast, not behave like a brake. At very low
+  // speed the automatic transmission supplies a small amount of idle creep.
+  const rollingResistance = 0.06 + damage * 1.5;
+  const aerodynamicDrag = absoluteSpeed * absoluteSpeed * 0.0012;
+  const engineBraking = !throttle && !brakeKey ? 0.04 + absoluteSpeed * 0.004 : 0;
+  const movingWithGear = data.speed * gearDirection >= -0.1;
+  const creepTarget = 2.8;
+  const shouldCreep = !throttle && !brakeKey && movingWithGear && absoluteSpeed < creepTarget;
   const changingDirection = throttle && data.speed * gearDirection < -0.2;
   data.braking = Boolean(data.brakePressure > 0.08 || changingDirection);
   if (!stationaryRev) {
@@ -2347,10 +2354,16 @@ function updatePlayer(dt) {
     else data.speed += gearDirection * accel * dt;
     if (brakeKey) data.speed = moveToward(data.speed, 0, brake * dt);
   }
-  if (!throttle && !brakeKey && absoluteSpeed > 0) {
-    data.speed = moveToward(data.speed, 0, (rollingResistance + aerodynamicDrag + engineBraking) * dt);
+  if (!throttle && !brakeKey) {
+    if (shouldCreep) {
+      data.speed = moveToward(data.speed, gearDirection * creepTarget, 3.2 * dt);
+    } else if (absoluteSpeed > 0) {
+      data.speed = moveToward(data.speed, 0, (rollingResistance + aerodynamicDrag + engineBraking) * dt);
+    }
   }
-  if (Math.abs(data.speed) < 0.1) data.speed = 0;
+  // Do not snap idle creep back to zero. Only settle the car when creep is not
+  // active (for example while braking or changing direction).
+  if (Math.abs(data.speed) < 0.1 && !shouldCreep) data.speed = 0;
   const damagedMaxSpeed = damage ? THREE.MathUtils.lerp(15, 7, damage) : data.maxSpeed;
   data.speed = THREE.MathUtils.clamp(data.speed, damage ? -5.5 : -11, damagedMaxSpeed);
 
