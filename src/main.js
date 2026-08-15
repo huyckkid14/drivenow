@@ -6688,6 +6688,14 @@ function updateCrashPhysics(dt) {
     const data = car.userData;
     if (!data.crashed || data.immobilized) continue;
 
+    // The player can keep using the service brake during the uncontrolled
+    // post-impact slide. Braking sheds linear momentum quickly and also damps
+    // the spin, while bots retain the existing passive crash friction.
+    const crashBrakeInput = data.player && !state.onFoot && keys.has("arrowdown") ? 1 : 0;
+    if (data.player) {
+      data.brakePressure = moveToward(data.brakePressure || 0, crashBrakeInput, dt * (crashBrakeInput ? 7.5 : 5));
+    }
+
     const previous = car.position.clone();
     car.position.addScaledVector(data.velocity, dt);
     car.rotation.y += data.angularVelocity * dt;
@@ -6697,9 +6705,11 @@ function updateCrashPhysics(dt) {
     car.position.z = THREE.MathUtils.clamp(car.position.z, -boundary, boundary);
 
     const speed = data.velocity.length();
-    const nextSpeed = Math.max(0, speed - CRASH_FRICTION * dt);
+    const crashBrakeForce = data.player ? (data.brakePressure || 0) * 23 : 0;
+    const nextSpeed = Math.max(0, speed - (CRASH_FRICTION + crashBrakeForce) * dt);
     if (speed > 0.001) data.velocity.multiplyScalar(nextSpeed / speed);
-    data.angularVelocity = moveToward(data.angularVelocity, 0, CRASH_SPIN_FRICTION * dt);
+    const crashSpinBrake = data.player ? (data.brakePressure || 0) * 8 : 0;
+    data.angularVelocity = moveToward(data.angularVelocity, 0, (CRASH_SPIN_FRICTION + crashSpinBrake) * dt);
     data.crashTimer += dt;
 
     if (data.crashTimer > 0.45 && data.velocity.length() < 0.35 && Math.abs(data.angularVelocity) < 0.12) {
