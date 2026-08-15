@@ -952,15 +952,29 @@ function createCockpitInterior(car) {
   const windshield = new THREE.Mesh(new THREE.PlaneGeometry(1.84, 0.86), glass);
   windshield.position.set(0, 1.67, 0.86);
   windshield.rotation.x = -0.12;
-  const cockpitHoodMaterial = new THREE.MeshPhysicalMaterial({
+  const cockpitHoodMaterial = new THREE.MeshBasicMaterial({
     color: 0xffd23f,
-    roughness: 0.28,
-    metalness: 0.16,
-    clearcoat: 0.85,
-    clearcoatRoughness: 0.16,
+    side: THREE.DoubleSide,
   });
-  const cockpitHood = new THREE.Mesh(roundedBoxGeometry(2.05, 0.12, 1.38, 0.12, 0.035), cockpitHoodMaterial);
-  cockpitHood.position.set(0, 0.77, 1.32);
+  // The exterior shell is hidden in cockpit view. Use one continuous tapered
+  // hood that reaches beneath both A-pillars, avoiding seams or open corners.
+  const hoodGeometry = new THREE.BufferGeometry();
+  hoodGeometry.setAttribute("position", new THREE.Float32BufferAttribute([
+    -1.62, 0.68, 0.96,   1.62, 0.68, 0.96,
+    -1.62, 0.94, 0.96,   1.62, 0.94, 0.96,
+    -1.10, 0.68, 2.20,   1.10, 0.68, 2.20,
+    -1.10, 0.90, 2.20,   1.10, 0.90, 2.20,
+  ], 3));
+  hoodGeometry.setIndex([
+    2, 3, 7, 2, 7, 6,
+    0, 4, 5, 0, 5, 1,
+    0, 1, 3, 0, 3, 2,
+    4, 6, 7, 4, 7, 5,
+    0, 2, 6, 0, 6, 4,
+    1, 5, 7, 1, 7, 3,
+  ]);
+  hoodGeometry.computeVertexNormals();
+  const cockpitHood = new THREE.Mesh(hoodGeometry, cockpitHoodMaterial);
   for (const [x, tilt] of [[-0.96, -0.12], [0.96, 0.12]]) {
     const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.9, 0.15), softTrim);
     pillar.position.set(x, 1.69, 0.78);
