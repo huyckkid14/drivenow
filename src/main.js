@@ -982,24 +982,25 @@ function createCockpitInterior(car) {
     cockpit.add(pillar);
   }
 
+  const steeringWheel = new THREE.Group();
+  steeringWheel.position.set(0.38, 1.1, 0.2);
+  steeringWheel.rotation.x = -0.14;
   const wheel = new THREE.Mesh(
     new THREE.TorusGeometry(0.24, 0.035, 12, 32),
     new THREE.MeshStandardMaterial({ color: 0x07090a, roughness: 0.65, side: THREE.DoubleSide }),
   );
   wheel.scale.setScalar(0.76);
-  wheel.position.set(0.38, 1.1, 0.22);
-  wheel.rotation.x = -0.14;
+  wheel.position.z = 0.02;
   const wheelHub = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.08, 20), trim);
-  wheelHub.position.set(0.38, 1.1, 0.2);
   wheelHub.rotation.x = Math.PI / 2;
   const wheelSpokes = new THREE.Group();
   for (const angle of [-2.35, -0.79, Math.PI / 2]) {
     const spoke = new THREE.Mesh(roundedBoxGeometry(0.19, 0.055, 0.045, 0.025, 0.01), softTrim);
-    spoke.position.set(0.38 + Math.cos(angle) * 0.08, 1.1 + Math.sin(angle) * 0.08, 0.185);
+    spoke.position.set(Math.cos(angle) * 0.08, Math.sin(angle) * 0.08, -0.015);
     spoke.rotation.z = angle;
-    spoke.rotation.x = -0.14;
     wheelSpokes.add(spoke);
   }
+  steeringWheel.add(wheel, wheelHub, wheelSpokes);
   const steeringColumn = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 0.34, 16), softTrim);
   steeringColumn.position.set(0.38, 1.0, 0.38);
   steeringColumn.rotation.x = Math.PI / 2 - 0.18;
@@ -1286,7 +1287,7 @@ function createCockpitInterior(car) {
   const rearviewStem = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.12, 0.06), trim);
   rearviewStem.position.set(0.34, 2.08, 0.77);
 
-  cockpit.add(dashboard, dashboardBrow, lowerDashboard, roof, windshield, cockpitHood, wheel, wheelHub, wheelSpokes, steeringColumn,
+  cockpit.add(dashboard, dashboardBrow, lowerDashboard, roof, windshield, cockpitHood, steeringWheel, steeringColumn,
     cockpitDetail, screenBezel, display, reverseWarning, clusterHood, cluster, infotainment, shifter, pedals,
     floor, footwell, seatBase, cabinTub,
     rearviewHousing, rearviewMirror, rearviewStem);
@@ -1302,6 +1303,7 @@ function createCockpitInterior(car) {
   cockpit.userData.backupGuides = backupGuides;
   cockpit.userData.blindSpotIcons = blindSpotIcons;
   cockpit.userData.hood = cockpitHood;
+  cockpit.userData.steeringWheel = steeringWheel;
   cockpit.userData.driverDoor = interiorDriverDoor;
   car.add(cockpit, exteriorMirrors);
   car.userData.cockpit = cockpit;
@@ -2120,7 +2122,7 @@ function animate() {
   updateSignals(dt);
   updateCamera(dt);
   updateGrenadeChargeMeter();
-  updateHud();
+  updateHud(dt);
   if (state.securityRoom) renderSecurityFeeds();
   else renderDrivingScene();
 }
@@ -6876,7 +6878,7 @@ function getCockpitImpactMotion(car) {
   };
 }
 
-function updateHud() {
+function updateHud(dt = 1 / 60) {
   document.body.classList.toggle("security-view", state.securityRoom);
   pistolCrosshairEl.hidden = !(state.policePistolDrawn || state.grenadeAimActive);
   const aimingDownSights = state.policePistolDrawn && state.policeAimZoom > 0.35;
@@ -6904,6 +6906,16 @@ function updateHud() {
     const cockpit = data.cockpit;
     if (cockpit.userData.hood && data.body?.material?.color) {
       cockpit.userData.hood.material.color.copy(data.body.material.color);
+    }
+    if (cockpit.userData.steeringWheel) {
+      const steeringWheel = cockpit.userData.steeringWheel;
+      const targetAngle = -data.steer * 1.65;
+      const stiffness = 34;
+      const damping = Math.exp(-10 * dt);
+      steeringWheel.userData.turnVelocity = (steeringWheel.userData.turnVelocity || 0)
+        + (targetAngle - steeringWheel.rotation.z) * stiffness * dt;
+      steeringWheel.userData.turnVelocity *= damping;
+      steeringWheel.rotation.z += steeringWheel.userData.turnVelocity * dt;
     }
     cockpit.userData.displayMaterial.map = state.backupCameraActive ? backupCameraTarget.texture : cockpit.userData.displayTexture;
     cockpit.userData.displayMaterial.needsUpdate = true;
