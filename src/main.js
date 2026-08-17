@@ -203,6 +203,11 @@ const state = {
   gearDragStartY: 0,
   gearDragStartZ: 0.16,
   gearDragZ: 0.16,
+  parkingBrakeDragging: false,
+  parkingBrakeDragStartY: 0,
+  parkingBrakeDragStartAngle: 1.08,
+  parkingBrakeDragAngle: 1.08,
+  parkingBrakeWreck: null,
   cockpitLook: { yaw: 0, pitch: 0, lastMovedAt: -Infinity },
   botSensitivity: 0,
   trafficDensity: 1,
@@ -897,6 +902,7 @@ function createPlayer() {
     steer: 0,
     throttlePressure: 0,
     brakePressure: 0,
+    parkingBrake: true,
     braking: false,
     velocity: new THREE.Vector3(),
     angularVelocity: 0,
@@ -1173,6 +1179,55 @@ function createCockpitInterior(car) {
   shifterStem.userData.gearSelector = true;
   shifterBoot.userData.gearSelector = true;
 
+  const parkingBrake = new THREE.Group();
+  const parkingBrakeGripMaterial = new THREE.MeshStandardMaterial({ color: 0x454d52, roughness: 0.62, metalness: 0.12 });
+  const parkingBrakeAccentMaterial = new THREE.MeshStandardMaterial({ color: 0xd93636, emissive: 0x8f1111, emissiveIntensity: 0.45 });
+  const parkingBrakeBase = new THREE.Mesh(
+    roundedBoxGeometry(0.22, 0.12, 0.34, 0.05, 0.018),
+    pianoBlack,
+  );
+  const parkingBrakeLever = new THREE.Group();
+  const parkingBrakeStem = new THREE.Mesh(
+    new THREE.BoxGeometry(0.065, 0.5, 0.065),
+    brushedMetal,
+  );
+  parkingBrakeStem.position.y = 0.25;
+  const parkingBrakeHandle = new THREE.Mesh(
+    roundedBoxGeometry(0.15, 0.28, 0.13, 0.05, 0.018),
+    parkingBrakeGripMaterial,
+  );
+  parkingBrakeHandle.position.y = 0.57;
+  const parkingBrakeBand = new THREE.Mesh(
+    new THREE.BoxGeometry(0.162, 0.05, 0.142),
+    parkingBrakeAccentMaterial,
+  );
+  parkingBrakeBand.position.y = 0.48;
+  const parkingBrakeButton = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.035, 0.035, 0.055, 12),
+    parkingBrakeAccentMaterial,
+  );
+  parkingBrakeButton.position.y = 0.74;
+  const parkingBrakeGrabArea = new THREE.Mesh(
+    new THREE.BoxGeometry(0.42, 1, 0.42),
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
+  );
+  parkingBrakeGrabArea.position.y = 0.4;
+  parkingBrakeLever.add(parkingBrakeStem, parkingBrakeHandle, parkingBrakeBand, parkingBrakeButton, parkingBrakeGrabArea);
+  parkingBrakeLever.rotation.x = -0.18;
+  // Keep the handbrake on the center console beside the shifter. The driver
+  // seat is centered at x=0.38, so placing it there makes it intersect the
+  // cushion and look as though it grows out of the seat.
+  parkingBrake.position.set(0.02, 0.77, -0.02);
+  parkingBrake.rotation.y = -0.08;
+  parkingBrake.scale.setScalar(0.54);
+  parkingBrake.add(parkingBrakeBase, parkingBrakeLever);
+  parkingBrakeBase.userData.parkingBrakeSelector = true;
+  parkingBrakeStem.userData.parkingBrakeSelector = true;
+  parkingBrakeHandle.userData.parkingBrakeSelector = true;
+  parkingBrakeBand.userData.parkingBrakeSelector = true;
+  parkingBrakeButton.userData.parkingBrakeSelector = true;
+  parkingBrakeGrabArea.userData.parkingBrakeSelector = true;
+
   const backupGuides = new THREE.Group();
   backupGuides.visible = false;
   for (const [color, z, width] of [[0x43e47a, -10.2, 2.35], [0xffd247, -7.2, 2.7], [0xff4b42, -4.25, 3.05]]) {
@@ -1295,7 +1350,7 @@ function createCockpitInterior(car) {
   rearviewStem.position.set(0.34, 2.08, 0.77);
 
   cockpit.add(dashboard, dashboardBrow, lowerDashboard, roof, windshield, cockpitHood, steeringWheel, steeringColumn,
-    cockpitDetail, screenBezel, display, reverseWarning, clusterHood, cluster, infotainment, shifter, pedals,
+    cockpitDetail, screenBezel, display, reverseWarning, clusterHood, cluster, infotainment, shifter, parkingBrake, pedals,
     floor, footwell, seatBase, cabinTub,
     rearviewHousing, rearviewMirror, rearviewStem);
   cockpit.userData.displayCanvas = displayCanvas;
@@ -1307,6 +1362,7 @@ function createCockpitInterior(car) {
   cockpit.userData.clusterCanvas = clusterCanvas;
   cockpit.userData.clusterTexture = clusterTexture;
   cockpit.userData.shifterLever = shifterLever;
+  cockpit.userData.parkingBrakeLever = parkingBrakeLever;
   cockpit.userData.backupGuides = backupGuides;
   cockpit.userData.blindSpotIcons = blindSpotIcons;
   cockpit.userData.hood = cockpitHood;
@@ -2287,6 +2343,10 @@ function updateTrafficLights() {
 function updatePlayer(dt) {
   const car = state.player;
   const data = car.userData;
+  if (state.parkingBrakeWreck) {
+    updateParkingBrakeWreck(dt);
+    return;
+  }
   if (state.policeInterview) {
     data.speed = 0;
     data.velocity.set(0, 0, 0);
@@ -2303,6 +2363,39 @@ function updatePlayer(dt) {
   }
   if (data.immobilized || data.crashed || state.onFoot || state.carTransition) {
     data.revRatio = moveToward(data.revRatio || 0, 0, dt * 4.5);
+    return;
+  }
+
+  if (data.parkingBrake) {
+    data.throttlePressure = moveToward(data.throttlePressure || 0, throttle, dt * (throttle ? 2.8 : 5.6));
+    data.brakePressure = moveToward(data.brakePressure || 0, brakeKey, dt * (brakeKey ? 5.8 : 8.5));
+    data.revRatio = moveToward(data.revRatio || 0, throttle ? 1 : 0, dt * (throttle ? 2.8 : 4.5));
+    data.braking = true;
+    const parkingSpeed = Math.abs(data.speed);
+    const parkingSpeedRatio = THREE.MathUtils.clamp(parkingSpeed / 24, 0, 1);
+    const parkingSteerInput = (keys.has("arrowleft") ? 1 : 0) - (keys.has("arrowright") ? 1 : 0);
+    data.steer = moveToward(data.steer || 0, parkingSteerInput, dt * 3.2);
+    if (parkingSpeed > 2.4) {
+      const spinDirection = data.parkingBrakeSpinDirection || Math.sign(data.steer) || 1;
+      const spinTarget = spinDirection * THREE.MathUtils.lerp(1.05, 3.35, parkingSpeedRatio);
+      data.angularVelocity = moveToward(data.angularVelocity || 0, spinTarget, dt * 5.2);
+      car.rotation.y += data.angularVelocity * dt;
+      // Locked rear wheels retain lateral momentum, so the car slides and
+      // rotates instead of snapping to a stop along its new facing direction.
+      const slidingForward = getForward(car).multiplyScalar(data.speed);
+      data.velocity.lerp(slidingForward, Math.min(1, dt * 0.42));
+      data.speed = moveToward(data.speed, 0, dt * THREE.MathUtils.lerp(2.4, 5.2, parkingSpeedRatio));
+    } else {
+      data.speed = moveToward(data.speed, 0, 12 * dt);
+      data.velocity.multiplyScalar(Math.max(0, 1 - 8 * dt));
+      data.angularVelocity = moveToward(data.angularVelocity || 0, 0, dt * 3.8);
+    }
+    const previous = car.position.clone();
+    car.position.addScaledVector(data.velocity, dt);
+    keepNearRoad(car);
+    resolveBuildingCollisions(car, previous);
+    car.position.x = THREE.MathUtils.clamp(car.position.x, -PLAYER_BOUNDS, PLAYER_BOUNDS);
+    car.position.z = THREE.MathUtils.clamp(car.position.z, -PLAYER_BOUNDS, PLAYER_BOUNDS);
     return;
   }
 
@@ -2376,6 +2469,10 @@ function updatePlayer(dt) {
     car.rotation.y += yawRate * dt * Math.sign(data.speed || 1);
     if (handbrake) car.rotation.y += data.steer * dt * 1.35 * speedFactor * Math.sign(data.speed);
   }
+  if (Math.abs(data.angularVelocity || 0) > 0.001) {
+    car.rotation.y += data.angularVelocity * dt;
+    data.angularVelocity = moveToward(data.angularVelocity, 0, dt * 2.2);
+  }
 
   const forward = getForward(car);
   const previous = car.position.clone();
@@ -2397,6 +2494,124 @@ function updatePlayer(dt) {
   resolveBuildingCollisions(car, previous);
   car.position.x = THREE.MathUtils.clamp(car.position.x, -PLAYER_BOUNDS, PLAYER_BOUNDS);
   car.position.z = THREE.MathUtils.clamp(car.position.z, -PLAYER_BOUNDS, PLAYER_BOUNDS);
+}
+
+function findParkingBrakeWreckTarget(car) {
+  let best = null;
+  let bestDistanceSq = Infinity;
+  for (const other of cars) {
+    if (other === car || !other.visible || other.userData.waitingForEntry) continue;
+    const distanceSq = car.position.distanceToSquared(other.position);
+    if (distanceSq >= bestDistanceSq) continue;
+    bestDistanceSq = distanceSq;
+    best = { type: "car", car: other };
+  }
+  for (const obstacle of buildingObstacles) {
+    const point = new THREE.Vector3(
+      THREE.MathUtils.clamp(car.position.x, obstacle.x - obstacle.halfX, obstacle.x + obstacle.halfX),
+      0,
+      THREE.MathUtils.clamp(car.position.z, obstacle.z - obstacle.halfZ, obstacle.z + obstacle.halfZ),
+    );
+    const distanceSq = car.position.distanceToSquared(point);
+    if (distanceSq >= bestDistanceSq) continue;
+    bestDistanceSq = distanceSq;
+    best = { type: "building", point };
+  }
+  return best;
+}
+
+function startParkingBrakeWreck() {
+  if (state.parkingBrakeWreck || state.onFoot || state.playerCrashed) return;
+  const car = state.player;
+  const data = car.userData;
+  const forward = getWorldForward(car).setY(0).normalize();
+  const cameraPosition = car.getWorldPosition(new THREE.Vector3())
+    .addScaledVector(forward, -15)
+    .add(new THREE.Vector3(0, 11, 0));
+  const spinDirection = Math.sign(data.steer) || 1;
+  state.cameraView = 0;
+  state.parkingBrakeWreck = {
+    target: findParkingBrakeWreckTarget(car),
+    cameraPosition,
+    startedAt: state.time,
+    spinDirection,
+    totaled: false,
+  };
+  data.parkingBrakeSpinDirection = spinDirection;
+  data.angularVelocity = spinDirection * 2.4;
+  data.speed = Math.sign(data.speed || 1) * Math.max(16, Math.abs(data.speed));
+  data.velocity.copy(forward.multiplyScalar(data.speed));
+  statusEl.textContent = "Parking brake locked — losing control!";
+}
+
+function totalParkingBrakeWreck() {
+  const wreck = state.parkingBrakeWreck;
+  if (!wreck || wreck.totaled) return;
+  wreck.totaled = true;
+  const data = state.player.userData;
+  const impactVelocity = data.velocity.clone();
+  const targetPosition = wreck.target?.type === "car" ? wreck.target.car.position : wreck.target?.point;
+  const impactNormal = targetPosition
+    ? state.player.position.clone().sub(targetPosition).setY(0).normalize()
+    : getForward(state.player).multiplyScalar(-1);
+  if (!data.destroyed) spawnCollisionDamage(state.player, impactNormal, impactVelocity, Math.max(16, impactVelocity.length()));
+  data.destroyed = true;
+  data.driveDamage = 1;
+  data.limpMode = false;
+  data.speed = 0;
+  data.velocity.set(0, 0, 0);
+  data.angularVelocity = 0;
+  data.immobilized = true;
+  data.braking = true;
+  data.hazard = true;
+  state.crashed = true;
+  state.playerCrashed = true;
+  restartBtn.hidden = false;
+  restartBtn.textContent = "Restart city";
+  statusEl.textContent = "Totaled!";
+  playCrashSound(1);
+}
+
+function updateParkingBrakeWreck(dt) {
+  const wreck = state.parkingBrakeWreck;
+  const car = state.player;
+  const data = car.userData;
+  if (!wreck || wreck.totaled) return;
+  if (state.playerCrashed || data.destroyed || data.immobilized) {
+    totalParkingBrakeWreck();
+    return;
+  }
+  const targetPosition = wreck.target?.type === "car"
+    ? wreck.target.car.position
+    : wreck.target?.point;
+  if (!targetPosition) {
+    wreck.target = findParkingBrakeWreckTarget(car);
+    return;
+  }
+  const toTarget = targetPosition.clone().sub(car.position).setY(0);
+  const distance = toTarget.length();
+  if (distance < (wreck.target.type === "car" ? 2.8 : CAR_RADIUS + 0.45)) {
+    totalParkingBrakeWreck();
+    return;
+  }
+  const direction = toTarget.normalize();
+  const desiredYaw = Math.atan2(direction.x, direction.z);
+  const age = state.time - wreck.startedAt;
+  const skidWave = Math.sin(age * 7.5) * 0.44 + Math.sin(age * 3.1) * 0.24;
+  const visualYaw = desiredYaw + wreck.spinDirection * skidWave;
+  car.rotation.y = lerpAngle(car.rotation.y, visualYaw, dt * 4.8);
+  data.angularVelocity = wreck.spinDirection * (2.2 + Math.abs(skidWave) * 2.4);
+  const sideways = new THREE.Vector3(direction.z, 0, -direction.x);
+  const wreckSpeed = Math.max(17, Math.abs(data.speed));
+  const desiredVelocity = direction.multiplyScalar(wreckSpeed)
+    .addScaledVector(sideways, wreck.spinDirection * Math.sin(age * 8.2) * 7.5);
+  data.velocity.lerp(desiredVelocity, Math.min(1, dt * 3.6));
+  data.speed = wreckSpeed;
+  data.braking = true;
+  const previous = car.position.clone();
+  car.position.addScaledVector(data.velocity, dt);
+  resolveBuildingCollisions(car, previous);
+  if (state.time - wreck.startedAt > 9) totalParkingBrakeWreck();
 }
 
 function updatePedestrian(dt) {
@@ -6805,6 +7020,12 @@ function updateCamera(dt) {
     camera.fov = nextFov;
     camera.updateProjectionMatrix();
   }
+  if (state.parkingBrakeWreck) {
+    camera.position.copy(state.parkingBrakeWreck.cameraPosition);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(car.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 1.25, 0)));
+    return;
+  }
   if (state.policeInterview && state.policeTarget) {
     const target = state.policeTarget;
     const closePosition = target.localToWorld(new THREE.Vector3(4.2, 2.15, -0.15));
@@ -6978,7 +7199,9 @@ function updateHud(dt = 1 / 60) {
   leftSignalBtn.classList.toggle("active", !state.hazard && state.signal === "left");
   rightSignalBtn.classList.toggle("active", !state.hazard && state.signal === "right");
   hazardsBtn.classList.toggle("active", state.hazard || state.player.userData.hazard);
-  if (state.securityRoom) {
+  if (state.parkingBrakeWreck?.totaled) {
+    statusEl.textContent = "Totaled!";
+  } else if (state.securityRoom) {
     statusEl.textContent = state.securitySelected === null
       ? `ALL ${securityCameras.length} SECURITY FEEDS — click one to enlarge — C to exit`
       : `CAMERA ${state.securitySelected + 1} HIGHLIGHTED — Esc to view all — C to exit`;
@@ -7007,6 +7230,8 @@ function updateHud(dt = 1 / 60) {
         : state.time < stop.acknowledgeUntil
           ? "Target acknowledged — hazards on"
           : "Target pulling over to player lane";
+  } else if (state.player.userData.parkingBrake && !state.playerCrashed) {
+    statusEl.textContent = "Parking brake engaged — drag the cockpit lever down to release";
   } else if (!state.playerCrashed) {
     statusEl.textContent = state.crashed ? "Crash in city" : "City clear";
   }
@@ -7139,6 +7364,12 @@ function updateCockpitDisplay(speed, rpm, leftActive = false, rightActive = fals
   clusterContext.font = "bold 28px system-ui";
   clusterContext.textAlign = "right";
   clusterContext.fillText(state.gear === "reverse" ? "R" : "D", 356, 170);
+  if (state.player.userData.parkingBrake) {
+    clusterContext.fillStyle = "#ff4b4b";
+    clusterContext.font = "bold 17px system-ui";
+    clusterContext.textAlign = "left";
+    clusterContext.fillText("P BRAKE", 18, 170);
+  }
   clusterContext.fillStyle = "#ffdc69";
   clusterContext.font = "bold 16px system-ui";
   clusterContext.fillText(formatGameClock(), 366, 27);
@@ -7153,6 +7384,17 @@ function updateCockpitDisplay(speed, rpm, leftActive = false, rightActive = fals
   const gearZ = state.gearDragging ? state.gearDragZ : state.gear === "reverse" ? -0.16 : 0.16;
   cockpit.userData.shifterLever.position.z = gearZ;
   cockpit.userData.shifterLever.rotation.x = gearZ * 0.7;
+  if (cockpit.userData.parkingBrakeLever) {
+    const leverAmount = state.parkingBrakeDragging
+      ? state.parkingBrakeDragAngle
+      : state.player.userData.parkingBrake ? 1.08 : 0.12;
+    const targetAngle = THREE.MathUtils.lerp(-1.08, -0.18, (leverAmount - 0.12) / 0.96);
+    cockpit.userData.parkingBrakeLever.rotation.x = THREE.MathUtils.lerp(
+      cockpit.userData.parkingBrakeLever.rotation.x,
+      targetAngle,
+      0.24,
+    );
+  }
 }
 
 function updateReverseWarningDisplay(cockpit) {
@@ -7192,6 +7434,11 @@ function onKeyDown(event) {
     return;
   }
   ensureAudio();
+  if (state.parkingBrakeWreck?.totaled) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   keys.add(key);
   if (["arrowup", "arrowdown", "arrowleft", "arrowright", "space", "q", "e", "f", "z", "c", "d", "h", "l", "p", "o", "1"].includes(key)) {
     event.preventDefault();
@@ -7329,6 +7576,7 @@ function onPointerDown(event) {
     event.preventDefault();
     return;
   }
+  if (beginParkingBrakeDrag(event)) return;
   if (beginGearDrag(event)) return;
   if (state.policeMode && !state.onFoot && selectPoliceTarget(event)) {
     event.preventDefault();
@@ -7343,6 +7591,42 @@ function onPointerDown(event) {
 }
 
 function onPointerMove(event) {
+  if (state.parkingBrakeDragging) {
+    const dragDistance = state.parkingBrakeDragStartY - event.clientY;
+    state.parkingBrakeDragAngle = THREE.MathUtils.clamp(
+      state.parkingBrakeDragStartAngle + dragDistance * 0.009,
+      0.12,
+      1.08,
+    );
+    const wasEngaged = state.player.userData.parkingBrake;
+    state.player.userData.parkingBrake = state.parkingBrakeDragAngle >= 0.52;
+    if (!wasEngaged && state.player.userData.parkingBrake && Math.abs(state.player.userData.speed) > 2.4) {
+      const playerData = state.player.userData;
+      const spinDirection = Math.sign(playerData.steer) || 1;
+      playerData.parkingBrakeSpinDirection = spinDirection;
+      // A locked rear axle immediately breaks sideways. Preserve forward
+      // momentum while adding a lateral kick so the maneuver is a visible
+      // swerve/spinout rather than only rotating the model in place.
+      const forward = getForward(state.player);
+      const sideways = new THREE.Vector3(forward.z, 0, -forward.x);
+      const breakawaySpeed = THREE.MathUtils.clamp(Math.abs(playerData.speed) * 0.34, 2.2, 8.5);
+      playerData.velocity.addScaledVector(sideways, spinDirection * breakawaySpeed);
+      playerData.angularVelocity = spinDirection * THREE.MathUtils.lerp(
+        1.25,
+        2.75,
+        THREE.MathUtils.clamp(Math.abs(playerData.speed) / 24, 0, 1),
+      );
+      startParkingBrakeWreck();
+    }
+    if (wasEngaged && !state.player.userData.parkingBrake) {
+      state.player.userData.parkingBrakeSpinDirection = 0;
+    }
+    statusEl.textContent = state.player.userData.parkingBrake
+      ? "Parking brake pulled up"
+      : "Parking brake released";
+    event.preventDefault();
+    return;
+  }
   if (state.gearDragging) {
     const dragDistance = event.clientY - state.gearDragStartY;
     state.gearDragZ = THREE.MathUtils.clamp(state.gearDragStartZ - dragDistance * 0.006, -0.16, 0.16);
@@ -7383,6 +7667,29 @@ function onPointerUp() {
   state.policeTriggerHeld = false;
   state.crashLook.active = false;
   state.gearDragging = false;
+  state.parkingBrakeDragging = false;
+}
+
+function beginParkingBrakeDrag(event) {
+  if (state.cameraView !== 2 || state.onFoot || state.securityRoom || state.policeInterview || state.carTransition) return false;
+  const cockpit = state.player.userData.cockpit;
+  if (!cockpit?.visible) return false;
+  const rect = renderer.domElement.getBoundingClientRect();
+  policePointer.set(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1,
+  );
+  policeRaycaster.setFromCamera(policePointer, camera);
+  const hit = policeRaycaster.intersectObject(cockpit, true).find((entry) => entry.object.userData.parkingBrakeSelector);
+  if (!hit) return false;
+  state.parkingBrakeDragging = true;
+  state.parkingBrakeDragStartY = event.clientY;
+  state.parkingBrakeDragStartAngle = state.player.userData.parkingBrake ? 1.08 : 0.12;
+  state.parkingBrakeDragAngle = state.parkingBrakeDragStartAngle;
+  renderer.domElement.setPointerCapture?.(event.pointerId);
+  statusEl.textContent = "Drag up to engage · down to release parking brake";
+  event.preventDefault();
+  return true;
 }
 
 function beginGearDrag(event) {
@@ -7796,6 +8103,9 @@ function restartCity() {
   state.gear = "drive";
   state.gearDragging = false;
   state.gearDragZ = 0.16;
+  state.parkingBrakeDragging = false;
+  state.parkingBrakeDragAngle = 1.08;
+  state.parkingBrakeWreck = null;
   state.cockpitLook.yaw = 0;
   state.cockpitLook.pitch = 0;
   state.cockpitLook.lastMovedAt = -Infinity;
