@@ -702,6 +702,14 @@ function createHelicopter() {
   searchlight.castShadow = true;
   searchlight.shadow.mapSize.set(1024, 1024);
   searchlight.shadow.bias = -0.00025;
+  const airBrakes = [];
+  for (const x of [-1, 1]) {
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.82, 1.25), accentMaterial);
+    panel.position.set(x * 1.5, 1.7, -0.65);
+    panel.rotation.z = 0;
+    helicopter.add(panel);
+    airBrakes.push(panel);
+  }
 
   for (const x of [-0.92, 0.92]) {
     const skid = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 4.2, 10), darkMaterial);
@@ -740,6 +748,7 @@ function createHelicopter() {
     rotorSpeed: 0,
     searchlight,
     searchlightLens,
+    airBrakes,
   };
   city.add(helicopter);
   state.helicopter = helicopter;
@@ -827,8 +836,9 @@ function updateHelicopter(dt) {
     const forwardInput = (keys.has("arrowup") ? 1 : 0) - (keys.has("arrowdown") ? 1 : 0);
     const steerInput = (keys.has("arrowleft") ? 1 : 0) - (keys.has("arrowright") ? 1 : 0);
     const verticalInput = (keys.has("w") ? 1 : 0) - (keys.has("s") ? 1 : 0);
-    const targetFlightSpeed = forwardInput > 0 ? 22 : forwardInput < 0 ? -12 : 0;
-    const flightAcceleration = forwardInput > 0 ? 5.4 : forwardInput < 0 ? 4.2 : 1.05;
+    const airBrake = keys.has("space");
+    const targetFlightSpeed = airBrake ? 0 : forwardInput > 0 ? 22 : forwardInput < 0 ? -12 : 0;
+    const flightAcceleration = airBrake ? 9.5 : forwardInput > 0 ? 5.4 : forwardInput < 0 ? 4.2 : 1.05;
     data.flightSpeed = moveToward(data.flightSpeed || 0, targetFlightSpeed, dt * flightAcceleration);
     const speedRatio = THREE.MathUtils.clamp(Math.abs(data.flightSpeed) / 22, 0, 1);
     data.steer = moveToward(data.steer || 0, steerInput, dt * (steerInput ? 1.55 : 2.15));
@@ -837,7 +847,8 @@ function updateHelicopter(dt) {
       helicopter.rotation.y += data.steer * yawRate * dt * Math.sign(data.flightSpeed);
     }
     const targetVelocity = getForward(helicopter).multiplyScalar(data.flightSpeed);
-    data.velocity.lerp(targetVelocity, Math.min(1, dt * THREE.MathUtils.lerp(1.15, 2.15, speedRatio)));
+    const velocityResponse = airBrake ? 4.8 : THREE.MathUtils.lerp(1.15, 2.15, speedRatio);
+    data.velocity.lerp(targetVelocity, Math.min(1, dt * velocityResponse));
     data.verticalVelocity = moveToward(data.verticalVelocity, verticalInput * 11, dt * 5.2);
     helicopter.position.addScaledVector(data.velocity, dt);
     helicopter.position.y = THREE.MathUtils.clamp(helicopter.position.y + data.verticalVelocity * dt, 0, 48);
@@ -846,11 +857,16 @@ function updateHelicopter(dt) {
     helicopter.position.z = THREE.MathUtils.clamp(helicopter.position.z, -PLAYER_BOUNDS, PLAYER_BOUNDS);
     helicopter.rotation.x = moveToward(helicopter.rotation.x, forwardInput * 0.2, dt * 0.72);
     helicopter.rotation.z = moveToward(helicopter.rotation.z, data.steer * 0.24 * speedRatio, dt * 0.78);
+    for (const panel of data.airBrakes) {
+      const side = Math.sign(panel.position.x);
+      panel.rotation.z = moveToward(panel.rotation.z, airBrake ? side * 0.9 : 0, dt * 3.8);
+    }
   } else {
     data.velocity.multiplyScalar(Math.max(0, 1 - dt * 1.8));
     data.verticalVelocity = moveToward(data.verticalVelocity, 0, dt * 5);
     helicopter.rotation.x = moveToward(helicopter.rotation.x, 0, dt * 1.8);
     helicopter.rotation.z = moveToward(helicopter.rotation.z, 0, dt * 1.8);
+    for (const panel of data.airBrakes) panel.rotation.z = moveToward(panel.rotation.z, 0, dt * 3.8);
   }
 
   if (!state.helicopterFalling || state.helicopterFatal) return;
@@ -7231,8 +7247,14 @@ function updateHud(dt = 1 / 60) {
   const aimingDownSights = state.policePistolDrawn && state.policeAimZoom > 0.35;
   aimVignetteEl.hidden = !aimingDownSights;
   pistolCrosshairEl.classList.toggle("aiming", aimingDownSights);
-  const speed = state.inHelicopter && state.helicopter
-    ? Math.round(state.helicopter.userData.velocity.length() * 2.237)
+  const helicopterAirspeed = state.inHelicopter && state.helicopter
+    ? Math.round(Math.hypot(
+      state.helicopter.userData.velocity.x,
+      state.helicopter.userData.velocity.z,
+    ) * 1.94384)
+    : 0;
+  const speed = state.inHelicopter
+    ? helicopterAirspeed
     : Math.round(Math.abs(state.player.userData.speed) * 2.237);
   gameClockEl.textContent = formatGameClock();
   const dashboardVisible = state.cameraView === 2 && !state.onFoot && !state.securityRoom && !state.policeInterview;
@@ -7288,7 +7310,7 @@ function updateHud(dt = 1 / 60) {
     updateCockpitDisplay(speed, rpm, blinkOn && (hazardsOn || state.signal === "left"), blinkOn && (hazardsOn || state.signal === "right"));
     updateReverseWarningDisplay(cockpit);
   }
-  speedEl.textContent = `${speed} mph`;
+  speedEl.textContent = state.inHelicopter ? `${helicopterAirspeed} kt airspeed` : `${speed} mph`;
   if (state.hazard || state.player.userData.hazard) signalEl.textContent = "Hazards";
   else if (state.signal === "left") signalEl.textContent = "Left indicator";
   else if (state.signal === "right") signalEl.textContent = "Right indicator";
@@ -7302,7 +7324,8 @@ function updateHud(dt = 1 / 60) {
     statusEl.textContent = "Falling — you exited before landing!";
   } else if (state.inHelicopter) {
     const altitude = Math.round(state.helicopter.position.y * 3.281);
-    statusEl.textContent = `HELICOPTER · ${altitude} ft · W/S altitude · arrows move · C exits`;
+    const airBrakeStatus = keys.has("space") ? " · AIR BRAKE" : "";
+    statusEl.textContent = `HELICOPTER · AIRSPEED ${helicopterAirspeed} kt · ${altitude} ft${airBrakeStatus} · W/S altitude · Space brakes · C exits`;
   } else if (state.securityRoom) {
     statusEl.textContent = state.securitySelected === null
       ? `ALL ${securityCameras.length} SECURITY FEEDS — click one to enlarge — C to exit`
