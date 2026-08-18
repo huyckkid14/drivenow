@@ -767,6 +767,8 @@ function enterHelicopter() {
   person.userData.speed = 0;
   if (state.carBeacon) state.carBeacon.visible = false;
   helicopter.userData.rotorSpeed = Math.max(helicopter.userData.rotorSpeed, 12);
+  state.nextStreetLightRefresh = 0;
+  state.nextBotHeadlightRefresh = 0;
   statusEl.textContent = "Helicopter — W/S altitude · arrows move · land before pressing C";
 }
 
@@ -776,6 +778,8 @@ function exitHelicopter() {
   if (!helicopter || !person || !state.inHelicopter) return;
   state.inHelicopter = false;
   state.onFoot = true;
+  state.nextStreetLightRefresh = 0;
+  state.nextBotHeadlightRefresh = 0;
   person.visible = true;
   if (helicopter.position.y > 0.12) {
     person.position.copy(helicopter.position).add(new THREE.Vector3(0, 1.3, 0));
@@ -2262,6 +2266,12 @@ function updateVehicleHeadlights(nightActive) {
   }
 }
 
+function getActiveLightingPosition() {
+  if (state.inHelicopter && state.helicopter) return state.helicopter.position;
+  if (state.onFoot && state.pedestrian?.visible) return state.pedestrian.position;
+  return state.player.position;
+}
+
 function setCarHeadlights(car, active) {
   for (const lamp of car.userData.headlights || []) {
     lamp.material.emissiveIntensity = active ? 9.5 : 0.12;
@@ -2276,7 +2286,7 @@ function updateBotHeadlightPool(active) {
   }
   if (state.time >= state.nextBotHeadlightRefresh) {
     state.nextBotHeadlightRefresh = state.time + 0.35;
-    const playerPosition = state.player.position;
+    const playerPosition = getActiveLightingPosition();
     const nearestBots = cars
       .filter((car) => !car.userData.player && car.visible && !car.userData.waitingForEntry && !car.userData.immobilized && !car.userData.destroyed)
       .map((car) => ({ car, distance: car.position.distanceToSquared(playerPosition) }))
@@ -2310,7 +2320,7 @@ function updateStreetLights(active) {
   }
   if (!active || state.time < state.nextStreetLightRefresh) return;
   state.nextStreetLightRefresh = state.time + 0.4;
-  const playerPosition = state.player.position;
+  const playerPosition = getActiveLightingPosition();
   const nearest = streetLights
     .map((fixture) => ({ fixture, distance: fixture.position.distanceToSquared(playerPosition) }))
     .sort((a, b) => a.distance - b.distance)
