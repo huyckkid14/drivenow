@@ -859,7 +859,9 @@ function updateHelicopter(dt) {
     if (helicopter.position.y <= 0 && data.verticalVelocity < 0) data.verticalVelocity = 0;
     helicopter.position.x = THREE.MathUtils.clamp(helicopter.position.x, -PLAYER_BOUNDS, PLAYER_BOUNDS);
     helicopter.position.z = THREE.MathUtils.clamp(helicopter.position.z, -PLAYER_BOUNDS, PLAYER_BOUNDS);
-    helicopter.rotation.x = moveToward(helicopter.rotation.x, forwardInput * 0.2, dt * 0.72);
+    // Keep the cabin level front-to-back during acceleration, coasting,
+    // reversing, and air braking. Turning may still bank the helicopter.
+    helicopter.rotation.x = moveToward(helicopter.rotation.x, 0, dt * 2.5);
     helicopter.rotation.z = moveToward(helicopter.rotation.z, data.steer * 0.24 * speedRatio, dt * 0.78);
     for (const panel of data.airBrakes) {
       const side = Math.sign(panel.position.x);
