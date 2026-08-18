@@ -224,6 +224,7 @@ const state = {
   onFoot: false,
   helicopter: null,
   helicopterVoice: null,
+  helicopterSearchlightOn: false,
   inHelicopter: false,
   helicopterFalling: null,
   helicopterFatal: false,
@@ -636,7 +637,7 @@ function createRacingArea() {
 
 function createHelicopter() {
   const helicopter = new THREE.Group();
-  const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0x245d8f, roughness: 0.38, metalness: 0.42 });
+  const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0xc7192d, roughness: 0.34, metalness: 0.38 });
   const darkMaterial = new THREE.MeshStandardMaterial({ color: 0x101820, roughness: 0.48, metalness: 0.3 });
   const glassMaterial = new THREE.MeshStandardMaterial({
     color: 0x86ccea,
@@ -645,7 +646,13 @@ function createHelicopter() {
     transparent: true,
     opacity: 0.72,
   });
-  const accentMaterial = new THREE.MeshStandardMaterial({ color: 0xf2c43d, roughness: 0.42, metalness: 0.18 });
+  const accentMaterial = new THREE.MeshStandardMaterial({ color: 0xf4f7fa, roughness: 0.38, metalness: 0.18 });
+  const searchlightMaterial = new THREE.MeshStandardMaterial({
+    color: 0xf5f8ff,
+    emissive: 0xe8f3ff,
+    emissiveIntensity: 0,
+    roughness: 0.16,
+  });
 
   const body = new THREE.Mesh(new THREE.SphereGeometry(1.55, 24, 16), bodyMaterial);
   body.scale.set(1.08, 0.82, 1.5);
@@ -682,6 +689,20 @@ function createHelicopter() {
     tailRotor.add(blade);
   }
 
+  const searchlightHousing = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.32, 0.46, 16), darkMaterial);
+  searchlightHousing.rotation.x = Math.PI / 2;
+  searchlightHousing.position.set(0, 1.02, 2.3);
+  const searchlightLens = new THREE.Mesh(new THREE.CircleGeometry(0.23, 18), searchlightMaterial);
+  searchlightLens.position.set(0, 1.02, 2.54);
+  const searchlightTarget = new THREE.Object3D();
+  searchlightTarget.position.set(0, -25, 52);
+  const searchlight = new THREE.SpotLight(0xf2f8ff, 0, 125, Math.PI / 8.5, 0.34, 1.05);
+  searchlight.position.set(0, 1.04, 2.48);
+  searchlight.target = searchlightTarget;
+  searchlight.castShadow = true;
+  searchlight.shadow.mapSize.set(1024, 1024);
+  searchlight.shadow.bias = -0.00025;
+
   for (const x of [-0.92, 0.92]) {
     const skid = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 4.2, 10), darkMaterial);
     skid.rotation.x = Math.PI / 2;
@@ -695,7 +716,19 @@ function createHelicopter() {
     }
   }
 
-  helicopter.add(body, cockpit, tailBoom, tailFin, mast, mainRotor, tailRotor);
+  helicopter.add(
+    body,
+    cockpit,
+    tailBoom,
+    tailFin,
+    mast,
+    mainRotor,
+    tailRotor,
+    searchlightHousing,
+    searchlightLens,
+    searchlightTarget,
+    searchlight,
+  );
   helicopter.position.set(RACE_CENTER_X, 0, 0);
   helicopter.userData = {
     mainRotor,
@@ -705,6 +738,8 @@ function createHelicopter() {
     flightSpeed: 0,
     steer: 0,
     rotorSpeed: 0,
+    searchlight,
+    searchlightLens,
   };
   city.add(helicopter);
   state.helicopter = helicopter;
@@ -779,6 +814,9 @@ function updateHelicopter(dt) {
   const helicopter = state.helicopter;
   if (!helicopter) return;
   const data = helicopter.userData;
+  const searchlightLevel = state.helicopterSearchlightOn ? 780 : 0;
+  data.searchlight.intensity = moveToward(data.searchlight.intensity, searchlightLevel, dt * 1150);
+  data.searchlightLens.material.emissiveIntensity = state.helicopterSearchlightOn ? 5.5 : 0;
   const rotorTarget = state.inHelicopter || helicopter.position.y > 0.15 ? 28 : 0;
   data.rotorSpeed = moveToward(data.rotorSpeed, rotorTarget, dt * 14);
   data.mainRotor.rotation.y += data.rotorSpeed * dt;
@@ -7495,6 +7533,13 @@ function onKeyDown(event) {
       toggleCarExit();
       state.toggleHeld.add(key);
     }
+    if (key === "l" && !event.repeat && !state.toggleHeld.has(key)) {
+      state.helicopterSearchlightOn = !state.helicopterSearchlightOn;
+      statusEl.textContent = state.helicopterSearchlightOn
+        ? "Helicopter search beam on"
+        : "Helicopter search beam off";
+      state.toggleHeld.add(key);
+    }
     return;
   }
   if (event.repeat && key === "q" && state.grenadeCharging && !state.grenadeAimActive) {
@@ -8107,6 +8152,7 @@ function stopPlayerHorn() {
 
 function restartCity() {
   destroyHelicopterVoice();
+  state.helicopterSearchlightOn = false;
   state.grenadeCharging = false;
   state.grenadeAimActive = false;
   state.grenadeCameraSnapBack = false;
