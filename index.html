@@ -4,49 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DriveNow</title>
-    <script>
-      try {
-        const introSeen = sessionStorage.getItem("drivenow-intro-seen") === "1";
-        document.documentElement.dataset.intro = introSeen ? "seen" : "new";
-        if (!introSeen) sessionStorage.setItem("drivenow-intro-seen", "1");
-      } catch {
-        document.documentElement.dataset.intro = "new";
-      }
-    </script>
-    <link rel="stylesheet" href="./styles.css?v=6" />
+    <link rel="stylesheet" href="./styles.css?v=8" />
   </head>
   <body>
-    <main id="introOverlay" aria-label="Welcome to DriveNow">
-      <section id="introBrand" aria-live="polite">
-        <div class="intro-logo-row">
-          <svg class="intro-car" viewBox="0 0 180 110" role="img" aria-label="Car icon">
-            <path d="M27 67 39 38c3-7 9-11 17-11h67c8 0 14 4 18 11l13 29" />
-            <path d="M17 66h146c7 0 12 5 12 12v13H5V78c0-7 5-12 12-12Z" />
-            <path d="M52 37h74l13 29H39l13-29Z" class="intro-window" />
-            <circle cx="39" cy="90" r="13" /><circle cx="141" cy="90" r="13" />
-            <path d="M18 73h23M139 73h23" class="intro-light" />
-          </svg>
-          <h1>DriveNow</h1>
-        </div>
-        <p>Let’s drive together.</p>
-      </section>
-      <section id="introDirections" aria-label="How to play">
-        <span class="intro-kicker">READY TO DRIVE?</span>
-        <h2>Know the controls</h2>
-        <div class="intro-control-grid">
-          <div><kbd>↑ ↓</kbd><strong>Pedals</strong><span>Accelerate and brake</span></div>
-          <div><kbd>← →</kbd><strong>Steer</strong><span>Turn the car or pedestrian</span></div>
-          <div><kbd>Space</kbd><strong>Drift</strong><span>Use the handbrake</span></div>
-          <div><kbd>C</kbd><strong>Enter / Exit</strong><span>Open doors and interact</span></div>
-          <div><kbd>W / S</kbd><strong>Helicopter</strong><span>Climb or descend; arrows move; Space air brakes</span></div>
-          <div><kbd>H</kbd><strong>Horn</strong><span>Hold for a longer honk</span></div>
-          <div><kbd>P</kbd><strong>Police mode</strong><span>Toggle mode; draw pistol on foot</span></div>
-          <div><kbd>Mouse</kbd><strong>Gear selector</strong><span>Drag the inside-view shifter between Drive and Reverse</span></div>
-        </div>
-        <p class="intro-more-controls"><kbd>D</kbd> change view · <kbd>Q</kbd>/<kbd>E</kbd> signals · <kbd>Z</kbd> hazards · <kbd>L</kbd> headlights · <kbd>F</kbd> police flashlight on foot · <kbd>O</kbd> toggle siren · <kbd>1</kbd> speak to driver</p>
-        <button id="startNow" type="button">Start Now</button>
-      </section>
-    </main>
     <div id="hud">
       <div class="brand">DriveNow</div>
       <div class="readout">
@@ -64,10 +24,13 @@
     <output id="fpsReading" aria-live="off">-- FPS</output>
     <output id="gameClock" aria-label="Game time">9:00 AM</output>
     <section id="settingsOverlay" hidden aria-label="Game settings">
-      <div class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div id="settingsPanel" class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
         <div class="settings-heading">
           <div><span>GAME PAUSED</span><h2 id="settingsTitle">Settings</h2></div>
-          <button id="closeSettings" type="button" aria-label="Close settings">×</button>
+          <div class="settings-heading-actions">
+            <button id="shortcutsButton" type="button" aria-label="Show controls" title="Show controls">?</button>
+            <button id="closeSettings" type="button" aria-label="Close settings">×</button>
+          </div>
         </div>
         <label class="settings-row" for="qualitySetting">
           <span><strong>Graphics quality</strong><small>Lower quality improves performance</small></span>
@@ -87,6 +50,46 @@
           <input id="trafficDensity" type="range" min="0" max="100" value="100" step="1" />
           <output id="trafficDensityValue" for="trafficDensity">500 cars</output>
         </label>
+        <section id="shortcutsPanel" class="shortcuts-panel" hidden aria-label="Controls and keyboard shortcuts">
+          <h3>Controls</h3>
+          <p>Press <kbd>?</kbd> again to hide this guide.</p>
+          <div class="shortcut-mode">
+            <h4>Driving</h4>
+            <div><kbd>↑</kbd><span>Accelerate in selected gear</span></div>
+            <div><kbd>↓</kbd><span>Brake</span></div>
+            <div><kbd>← →</kbd><span>Steer</span></div>
+            <div><kbd>Space</kbd><span>Handbrake drift</span></div>
+            <div><kbd>D</kbd><span>Cycle camera views</span></div>
+            <div><kbd>Q / E</kbd><span>Left / right signal</span></div>
+            <div><kbd>Z</kbd><span>Hazard lights</span></div>
+            <div><kbd>H</kbd><span>Hold horn</span></div>
+            <div><kbd>L</kbd><span>Headlights</span></div>
+            <div><kbd>C</kbd><span>Enter or exit vehicle</span></div>
+            <div><kbd>Mouse</kbd><span>Look around; drag cockpit gear stick</span></div>
+          </div>
+          <div class="shortcut-mode">
+            <h4>Walking and police</h4>
+            <div><kbd>Arrows</kbd><span>Walk and turn</span></div>
+            <div><kbd>C</kbd><span>Enter vehicles or interact</span></div>
+            <div><kbd>P</kbd><span>Police mode / draw or holster weapon</span></div>
+            <div><kbd>Mouse</kbd><span>Aim and fire</span></div>
+            <div><kbd>Shift</kbd><span>Aim down sights</span></div>
+            <div><kbd>E</kbd><span>Change firearm</span></div>
+            <div><kbd>Q</kbd><span>Hold and release to throw grenade</span></div>
+            <div><kbd>F</kbd><span>Police flashlight</span></div>
+            <div><kbd>O</kbd><span>Toggle police siren</span></div>
+            <div><kbd>1</kbd><span>Start or end driver interaction</span></div>
+          </div>
+          <div class="shortcut-mode">
+            <h4>Helicopter</h4>
+            <div><kbd>↑ / ↓</kbd><span>Accelerate forward / reverse</span></div>
+            <div><kbd>← / →</kbd><span>Turn</span></div>
+            <div><kbd>W / S</kbd><span>Climb / descend</span></div>
+            <div><kbd>Space</kbd><span>Hold air brakes</span></div>
+            <div><kbd>L</kbd><span>Search beam</span></div>
+            <div><kbd>C</kbd><span>Exit only after landing safely</span></div>
+          </div>
+        </section>
         <button id="resumeGame" type="button">Resume game</button>
       </div>
     </section>
@@ -110,6 +113,6 @@
         }
       }
     </script>
-    <script type="module" src="./src/main.js?v=291"></script>
+    <script type="module" src="./src/main.js?v=293"></script>
   </body>
 </html>

@@ -298,6 +298,8 @@ body.security-view #status {
 
 .settings-panel {
   width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
   padding: 22px;
   border: 1px solid rgba(255,255,255,.24);
   border-radius: 18px;
@@ -309,6 +311,11 @@ body.security-view #status {
 .settings-heading span { color: #ffdc69; font-size: 11px; font-weight: 900; letter-spacing: .14em; }
 .settings-heading h2 { margin: 4px 0 0; font-size: 30px; }
 .settings-heading button { width: 38px; height: 38px; border: 1px solid rgba(255,255,255,.22); border-radius: 9px; background: rgba(255,255,255,.1); color: white; font-size: 25px; cursor: pointer; }
+.settings-heading-actions { display: flex; gap: 8px; }
+.settings-heading button.active { border-color: #ffdc69; background: #ffcc33; color: #172019; }
+.settings-panel.shortcuts-open > .settings-row,
+.settings-panel.shortcuts-open > .settings-range,
+.settings-panel.shortcuts-open > #resumeGame { display: none; }
 
 .settings-row,
 .settings-range {
@@ -326,6 +333,25 @@ body.security-view #status {
 
 #resumeGame { width: 100%; margin-top: 12px; padding: 13px 18px; border: 0; border-radius: 10px; background: #ffcc33; color: #172019; font: 900 15px/1 system-ui; cursor: pointer; }
 #resumeGame:hover { background: #ffda61; }
+
+.shortcuts-panel {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid rgba(255, 220, 105, .3);
+  border-radius: 13px;
+  background: rgba(5, 13, 15, .72);
+}
+.shortcuts-panel h3 { margin: 0; color: #ffdc69; font-size: 24px; }
+.shortcuts-panel > p { margin: 5px 0 14px; color: #aabdb9; font-size: 12px; }
+.shortcut-mode { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px; margin-top: 15px; }
+.shortcut-mode h4 { grid-column: 1 / -1; margin: 0 0 2px; color: white; font-size: 15px; }
+.shortcut-mode div { display: grid; grid-template-columns: 72px 1fr; align-items: center; gap: 8px; min-height: 31px; color: #d5e2df; font-size: 12px; }
+.shortcut-mode kbd,
+.shortcuts-panel > p kbd { padding: 5px 7px; border: 1px solid rgba(255,255,255,.2); border-bottom-width: 3px; border-radius: 6px; background: #263638; color: #fff; font: 800 11px/1 system-ui; text-align: center; }
+
+@media (max-width: 650px) {
+  .shortcut-mode { grid-template-columns: 1fr; }
+}
 
 .range-control {
   display: grid;

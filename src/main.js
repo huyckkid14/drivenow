@@ -45,12 +45,13 @@ const trafficDensityEl = document.querySelector("#trafficDensity");
 const trafficDensityValueEl = document.querySelector("#trafficDensityValue");
 const policeInteractionEl = document.querySelector("#policeInteraction");
 const driverResponseEl = document.querySelector("#driverResponse");
-const introOverlayEl = document.querySelector("#introOverlay");
-const startNowBtn = document.querySelector("#startNow");
 const settingsButtonEl = document.querySelector("#settingsButton");
 const settingsOverlayEl = document.querySelector("#settingsOverlay");
+const settingsPanelEl = document.querySelector("#settingsPanel");
 const closeSettingsEl = document.querySelector("#closeSettings");
 const resumeGameEl = document.querySelector("#resumeGame");
+const shortcutsButtonEl = document.querySelector("#shortcutsButton");
+const shortcutsPanelEl = document.querySelector("#shortcutsPanel");
 const qualitySettingEl = document.querySelector("#qualitySetting");
 const fpsReadingEl = document.querySelector("#fpsReading");
 const gameClockEl = document.querySelector("#gameClock");
@@ -190,7 +191,6 @@ const state = {
   grenadeChargeStartedAt: -10,
   grenadeChargeMeter: null,
   grenadeCameraSnapBack: false,
-  introActive: document.documentElement.dataset.intro === "new",
   cameraView: 2,
   backupCameraActive: false,
   reverseCrossTrafficDirection: null,
@@ -318,13 +318,13 @@ function init() {
   settingsButtonEl.addEventListener("click", openSettings);
   closeSettingsEl.addEventListener("click", closeSettings);
   resumeGameEl.addEventListener("click", closeSettings);
+  shortcutsButtonEl.addEventListener("click", toggleShortcutsPanel);
   settingsOverlayEl.addEventListener("click", (event) => {
     if (event.target === settingsOverlayEl) closeSettings();
   });
   qualitySettingEl.addEventListener("change", applyQualitySetting);
   restartBtn.addEventListener("click", restartCity);
   policeInteractionEl.addEventListener("click", onPoliceInteractionClick);
-  setupIntro();
   updateBotSensitivity();
   updateTrafficDensity();
   applyQualitySetting();
@@ -422,19 +422,6 @@ function carCabinGeometry() {
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
   return geometry;
-}
-
-function setupIntro() {
-  if (!state.introActive) return;
-  const revealDelay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 50 : 2850;
-  window.setTimeout(() => introOverlayEl.classList.add("directions"), revealDelay);
-  startNowBtn.addEventListener("click", () => {
-    introOverlayEl.classList.add("leaving");
-    state.introActive = false;
-    clock.getDelta();
-    renderer.domElement.focus();
-    window.setTimeout(() => introOverlayEl.classList.add("finished"), 560);
-  }, { once: true });
 }
 
 function createRoads() {
@@ -861,7 +848,7 @@ function updateHelicopter(dt) {
     helicopter.position.z = THREE.MathUtils.clamp(helicopter.position.z, -PLAYER_BOUNDS, PLAYER_BOUNDS);
     // Keep the cabin level front-to-back during acceleration, coasting,
     // reversing, and air braking. Turning may still bank the helicopter.
-    helicopter.rotation.x = moveToward(helicopter.rotation.x, 0, dt * 2.5);
+    helicopter.rotation.x = 0;
     helicopter.rotation.z = moveToward(helicopter.rotation.z, data.steer * 0.24 * speedRatio, dt * 0.78);
     for (const panel of data.airBrakes) {
       const side = Math.sign(panel.position.x);
@@ -2363,11 +2350,6 @@ function animate() {
   const rawDelta = clock.getDelta();
   const dt = Math.min(rawDelta, 0.045);
   updateFpsReading(rawDelta);
-  if (state.introActive) {
-    updateCamera(dt);
-    renderer.render(scene, camera);
-    return;
-  }
   if (state.settingsOpen) {
     renderer.render(scene, camera);
     return;
@@ -2421,14 +2403,24 @@ function updateFpsReading(delta) {
 }
 
 function openSettings() {
-  if (state.introActive) return;
   state.settingsOpen = true;
   settingsOverlayEl.hidden = false;
+  shortcutsPanelEl.hidden = true;
+  settingsPanelEl.classList.remove("shortcuts-open");
+  shortcutsButtonEl.classList.remove("active");
+  shortcutsButtonEl.setAttribute("aria-label", "Show controls");
   keys.clear();
   state.toggleHeld.clear();
   state.policeTriggerHeld = false;
   stopPlayerHorn();
   if (document.pointerLockElement === renderer.domElement) document.exitPointerLock?.();
+}
+
+function toggleShortcutsPanel() {
+  shortcutsPanelEl.hidden = !shortcutsPanelEl.hidden;
+  settingsPanelEl.classList.toggle("shortcuts-open", !shortcutsPanelEl.hidden);
+  shortcutsButtonEl.classList.toggle("active", !shortcutsPanelEl.hidden);
+  shortcutsButtonEl.setAttribute("aria-label", shortcutsPanelEl.hidden ? "Show controls" : "Hide controls");
 }
 
 function closeSettings() {
@@ -7553,6 +7545,9 @@ function onKeyDown(event) {
     if (key === "escape") {
       event.preventDefault();
       closeSettings();
+    } else if (key === "?" || event.code === "Slash") {
+      event.preventDefault();
+      toggleShortcutsPanel();
     }
     return;
   }
@@ -7613,7 +7608,7 @@ function onKeyDown(event) {
   if (key === "f") togglePoliceFlashlight();
   if (key === "z") toggleHazards();
   if (key === "c") toggleCarExit();
-  if (key === "d" && !state.introActive && !state.onFoot && !state.securityRoom && !state.policeInterview) {
+  if (key === "d" && !state.onFoot && !state.securityRoom && !state.policeInterview) {
     state.cameraView = (state.cameraView + 1) % 3;
     state.cockpitLook.yaw = 0;
     state.cockpitLook.pitch = 0;
