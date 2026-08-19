@@ -228,6 +228,7 @@ const state = {
   inHelicopter: false,
   helicopterFalling: null,
   helicopterFatal: false,
+  helicopterCrashed: false,
   tomatoSplatter: null,
   securityRoom: false,
   securitySelected: null,
@@ -744,7 +745,7 @@ function createHelicopter() {
 function enterHelicopter() {
   const helicopter = state.helicopter;
   const person = state.pedestrian;
-  if (!helicopter || !person || state.helicopterFatal) return;
+  if (!helicopter || !person || state.helicopterFatal || state.helicopterCrashed) return;
   ensureAudio();
   state.inHelicopter = true;
   state.onFoot = false;
@@ -810,6 +811,140 @@ function createTomatoSplatter(position) {
   state.tomatoSplatter = splatter;
 }
 
+function circleRectangleContact(x, z, radius, rectangle) {
+  const minX = rectangle.x - rectangle.halfX;
+  const maxX = rectangle.x + rectangle.halfX;
+  const minZ = rectangle.z - rectangle.halfZ;
+  const maxZ = rectangle.z + rectangle.halfZ;
+  const nearestX = THREE.MathUtils.clamp(x, minX, maxX);
+  const nearestZ = THREE.MathUtils.clamp(z, minZ, maxZ);
+  const dx = x - nearestX;
+  const dz = z - nearestZ;
+  const distance = Math.hypot(dx, dz);
+  if (distance > radius) return null;
+  if (distance > 0.0001) {
+    return { normal: new THREE.Vector3(dx / distance, 0, dz / distance), depth: radius - distance };
+  }
+
+  const exits = [
+    { distance: x - minX, normal: new THREE.Vector3(-1, 0, 0) },
+    { distance: maxX - x, normal: new THREE.Vector3(1, 0, 0) },
+    { distance: z - minZ, normal: new THREE.Vector3(0, 0, -1) },
+    { distance: maxZ - z, normal: new THREE.Vector3(0, 0, 1) },
+  ];
+  exits.sort((a, b) => a.distance - b.distance);
+  return { normal: exits[0].normal, depth: radius + exits[0].distance };
+}
+
+function getHelicopterCollision(helicopter, proposedPosition) {
+  const forward = getForward(helicopter).setY(0).normalize();
+  const bodyBottom = proposedPosition.y + 0.18;
+  const bodyTop = proposedPosition.y + 3.45;
+  const collisionSections = [
+    { x: proposedPosition.x, z: proposedPosition.z, radius: 1.85 },
+    { x: proposedPosition.x - forward.x * 3.7, z: proposedPosition.z - forward.z * 3.7, radius: 1.05 },
+    { x: proposedPosition.x - forward.x * 5.7, z: proposedPosition.z - forward.z * 5.7, radius: 0.65 },
+  ];
+
+  for (const obstacle of buildingObstacles) {
+    if (bodyBottom > (obstacle.height ?? 30)) continue;
+    for (const section of collisionSections) {
+      const contact = circleRectangleContact(section.x, section.z, section.radius, obstacle);
+      if (contact) return { type: "building", obstacle, ...contact };
+    }
+    // The rotor disk is thin, but it can strike a building before the cabin does.
+    const rotorHeight = proposedPosition.y + 3.68;
+    if (rotorHeight <= (obstacle.height ?? 30) + 0.18) {
+      const rotorContact = circleRectangleContact(proposedPosition.x, proposedPosition.z, 5.2, obstacle);
+      if (rotorContact) return { type: "building", obstacle, ...rotorContact };
+    }
+  }
+
+  const car = getHelicopterCarCollision(proposedPosition, collisionSections, bodyBottom, bodyTop);
+  if (car) return { type: "car", car };
+  return null;
+}
+
+function getHelicopterCarCollision(proposedPosition, sections = null, bodyBottom = proposedPosition.y + 0.18, bodyTop = proposedPosition.y + 3.45) {
+  if (bodyBottom > 2.35 || bodyTop < 0) return null;
+  const collisionSections = sections || [{ x: proposedPosition.x, z: proposedPosition.z, radius: 1.85 }];
+  for (const car of collidableCars) {
+    if (!car.visible) continue;
+    const carPosition = car.getWorldPosition(new THREE.Vector3());
+    if (collisionSections.some((section) => Math.hypot(section.x - carPosition.x, section.z - carPosition.z) < section.radius + 1.85)) {
+      return car;
+    }
+  }
+  return null;
+}
+
+function crashHelicopter(collision, previousPosition, impactSpeed) {
+  const helicopter = state.helicopter;
+  if (!helicopter || state.helicopterCrashed) return;
+  const data = helicopter.userData;
+  helicopter.position.copy(previousPosition);
+  const impactVelocity = data.velocity.clone();
+  const impactVerticalVelocity = data.verticalVelocity;
+  data.flightSpeed = 0;
+  data.steer = 0;
+  if (collision.type === "building" && collision.normal) {
+    helicopter.position.addScaledVector(collision.normal, Math.max(0.14, collision.depth + 0.12));
+  }
+
+  if (collision?.car) {
+    damageCarFromHelicopter(collision.car, helicopter.position, impactVelocity, impactSpeed);
+  }
+
+  playCrashSound(THREE.MathUtils.clamp(impactSpeed / 13, 0.45, 1));
+  if (impactSpeed < 4.5) {
+    data.velocity.set(0, 0, 0);
+    data.verticalVelocity = 0;
+    statusEl.textContent = `Helicopter bumped a ${collision.type} — stopped`;
+    return;
+  }
+
+  state.helicopterCrashed = true;
+  state.crashed = true;
+  data.crashed = true;
+  data.crashRoll = (Math.random() < 0.5 ? -1 : 1) * THREE.MathUtils.lerp(0.42, 0.95, THREE.MathUtils.clamp(impactSpeed / 20, 0, 1));
+  data.crashPitch = THREE.MathUtils.clamp(impactVelocity.length() / 20, 0.2, 0.62);
+  data.velocity.copy(impactVelocity);
+  if (collision.type === "building" && collision.normal) {
+    const inwardSpeed = data.velocity.dot(collision.normal);
+    if (inwardSpeed < 0) data.velocity.addScaledVector(collision.normal, -1.38 * inwardSpeed);
+    else data.velocity.addScaledVector(collision.normal, 2.6);
+    data.velocity.multiplyScalar(0.48);
+  } else {
+    data.velocity.multiplyScalar(0.42);
+  }
+  data.verticalVelocity = Math.min(-2.5, impactVerticalVelocity * 0.45);
+  data.crashAngularVelocity = data.crashRoll * 1.6;
+  data.crashSettled = false;
+  data.damagedCars = new Set(collision?.car ? [collision.car] : []);
+  state.helicopterSearchlightOn = false;
+  restartBtn.hidden = false;
+  statusEl.textContent = "HELICOPTER DESTROYED — falling!";
+}
+
+function damageCarFromHelicopter(car, helicopterPosition, helicopterVelocity, impactSpeed) {
+  if (!car || car.userData.destroyed) return;
+  const away = car.position.clone().sub(helicopterPosition).setY(0);
+  if (away.lengthSq() < 0.01) away.set(1, 0, 0);
+  away.normalize();
+  const impactDirection = away.clone();
+  const force = THREE.MathUtils.clamp(impactSpeed * 0.65 + 4, 5, 22);
+  const crashVelocity = away.multiplyScalar(force).addScaledVector(helicopterVelocity, 0.28);
+  spawnCollisionDamage(car, impactDirection.multiplyScalar(-1), crashVelocity, impactSpeed);
+  startCrashSlide(car, crashVelocity, THREE.MathUtils.clamp(force * 0.09, -2.4, 2.4));
+  car.userData.driveDamage = THREE.MathUtils.clamp((car.userData.driveDamage || 0) + impactSpeed / 18, 0.45, 1);
+  car.userData.hazard = true;
+  if (impactSpeed >= 8) car.userData.destroyed = true;
+  if (car.userData.player) {
+    state.playerCrashed = true;
+    restartBtn.hidden = false;
+  }
+}
+
 function updateHelicopter(dt) {
   const helicopter = state.helicopter;
   if (!helicopter) return;
@@ -817,13 +952,59 @@ function updateHelicopter(dt) {
   const searchlightLevel = state.helicopterSearchlightOn ? 780 : 0;
   data.searchlight.intensity = moveToward(data.searchlight.intensity, searchlightLevel, dt * 1150);
   data.searchlightLens.material.emissiveIntensity = state.helicopterSearchlightOn ? 5.5 : 0;
-  const rotorTarget = state.inHelicopter || helicopter.position.y > 0.15 ? 28 : 0;
+  const rotorTarget = state.helicopterCrashed ? 0 : state.inHelicopter || helicopter.position.y > 0.15 ? 28 : 0;
   data.rotorSpeed = moveToward(data.rotorSpeed, rotorTarget, dt * 14);
   data.mainRotor.rotation.y += data.rotorSpeed * dt;
   data.tailRotor.rotation.z += data.rotorSpeed * 1.8 * dt;
   updateHelicopterSound();
 
+  if (state.helicopterCrashed) {
+    if (!data.crashSettled) {
+      data.verticalVelocity -= 15.5 * dt;
+      data.velocity.multiplyScalar(Math.max(0, 1 - dt * 0.22));
+      const proposedPosition = helicopter.position.clone().addScaledVector(data.velocity, dt);
+      proposedPosition.y += data.verticalVelocity * dt;
+      proposedPosition.x = THREE.MathUtils.clamp(proposedPosition.x, -PLAYER_BOUNDS, PLAYER_BOUNDS);
+      proposedPosition.z = THREE.MathUtils.clamp(proposedPosition.z, -PLAYER_BOUNDS, PLAYER_BOUNDS);
+
+      if (proposedPosition.y <= 0) {
+        proposedPosition.y = 0;
+        data.crashSettled = true;
+        data.velocity.set(0, 0, 0);
+        data.verticalVelocity = 0;
+        data.crashAngularVelocity = 0;
+        helicopter.position.copy(proposedPosition);
+        playCrashSound(1);
+        statusEl.textContent = "HELICOPTER DESTROYED — Restart city";
+      } else {
+        const fallingObstacle = getHelicopterCollision(helicopter, proposedPosition);
+        if (fallingObstacle?.type === "building" && fallingObstacle.normal) {
+          proposedPosition.addScaledVector(fallingObstacle.normal, fallingObstacle.depth + 0.1);
+          const inwardSpeed = data.velocity.dot(fallingObstacle.normal);
+          if (inwardSpeed < 0) data.velocity.addScaledVector(fallingObstacle.normal, -1.3 * inwardSpeed);
+          data.velocity.multiplyScalar(0.72);
+          data.crashAngularVelocity *= -0.72;
+          playCrashSound(THREE.MathUtils.clamp(Math.abs(inwardSpeed) / 12, 0.4, 0.9));
+        }
+        helicopter.position.copy(proposedPosition);
+        const fallingCar = getHelicopterCarCollision(proposedPosition);
+        if (fallingCar && !data.damagedCars.has(fallingCar)) {
+          const fallImpactSpeed = Math.hypot(data.velocity.length(), Math.abs(data.verticalVelocity));
+          damageCarFromHelicopter(fallingCar, helicopter.position, data.velocity, fallImpactSpeed);
+          data.damagedCars.add(fallingCar);
+          playCrashSound(THREE.MathUtils.clamp(fallImpactSpeed / 13, 0.55, 1));
+        }
+      }
+      helicopter.rotation.y += data.crashAngularVelocity * dt * 0.42;
+      helicopter.rotation.x += (data.crashPitch || 0.3) * dt;
+      helicopter.rotation.z += (data.crashAngularVelocity || 0) * dt;
+    }
+    for (const panel of data.airBrakes) panel.rotation.z = moveToward(panel.rotation.z, 0, dt * 3.8);
+    return;
+  }
+
   if (state.inHelicopter) {
+    const previousPosition = helicopter.position.clone();
     const forwardInput = (keys.has("arrowup") ? 1 : 0) - (keys.has("arrowdown") ? 1 : 0);
     const steerInput = (keys.has("arrowleft") ? 1 : 0) - (keys.has("arrowright") ? 1 : 0);
     const verticalInput = (keys.has("w") ? 1 : 0) - (keys.has("s") ? 1 : 0);
@@ -841,11 +1022,28 @@ function updateHelicopter(dt) {
     const velocityResponse = airBrake ? 4.8 : THREE.MathUtils.lerp(1.15, 2.15, speedRatio);
     data.velocity.lerp(targetVelocity, Math.min(1, dt * velocityResponse));
     data.verticalVelocity = moveToward(data.verticalVelocity, verticalInput * 11, dt * 5.2);
-    helicopter.position.addScaledVector(data.velocity, dt);
-    helicopter.position.y = THREE.MathUtils.clamp(helicopter.position.y + data.verticalVelocity * dt, 0, 48);
-    if (helicopter.position.y <= 0 && data.verticalVelocity < 0) data.verticalVelocity = 0;
-    helicopter.position.x = THREE.MathUtils.clamp(helicopter.position.x, -PLAYER_BOUNDS, PLAYER_BOUNDS);
-    helicopter.position.z = THREE.MathUtils.clamp(helicopter.position.z, -PLAYER_BOUNDS, PLAYER_BOUNDS);
+    const horizontalImpactSpeed = data.velocity.length();
+    const downwardImpactSpeed = Math.max(0, -data.verticalVelocity);
+    const proposedPosition = helicopter.position.clone().addScaledVector(data.velocity, dt);
+    proposedPosition.y += data.verticalVelocity * dt;
+    if (proposedPosition.y <= 0) {
+      proposedPosition.y = 0;
+      if (downwardImpactSpeed > 5.5 || horizontalImpactSpeed > 9) {
+        helicopter.position.copy(proposedPosition);
+        crashHelicopter({ type: "ground" }, previousPosition, Math.hypot(horizontalImpactSpeed, downwardImpactSpeed * 1.25));
+        return;
+      }
+      if (data.verticalVelocity < 0) data.verticalVelocity = 0;
+    }
+    proposedPosition.y = THREE.MathUtils.clamp(proposedPosition.y, 0, 48);
+    proposedPosition.x = THREE.MathUtils.clamp(proposedPosition.x, -PLAYER_BOUNDS, PLAYER_BOUNDS);
+    proposedPosition.z = THREE.MathUtils.clamp(proposedPosition.z, -PLAYER_BOUNDS, PLAYER_BOUNDS);
+    const collision = getHelicopterCollision(helicopter, proposedPosition);
+    if (collision) {
+      crashHelicopter(collision, previousPosition, Math.hypot(horizontalImpactSpeed, downwardImpactSpeed * 1.25));
+      return;
+    }
+    helicopter.position.copy(proposedPosition);
     // Keep the cabin level front-to-back during acceleration, coasting,
     // reversing, and air braking. Turning may still bank the helicopter.
     helicopter.rotation.x = 0;
@@ -947,7 +1145,7 @@ function createBlocks() {
         tower.castShadow = true;
         tower.receiveShadow = true;
         buildings.add(tower);
-        buildingObstacles.push({ x: bx, z: bz, halfX: w / 2 + 0.1, halfZ: d / 2 + 0.1 });
+        buildingObstacles.push({ x: bx, z: bz, halfX: w / 2 + 0.1, halfZ: d / 2 + 0.1, height: h + 0.45 });
 
         const roofTrim = new THREE.Mesh(
           roundedBoxGeometry(w + 0.28, 0.28, d + 0.28, 0.16, 0.05),
@@ -1005,7 +1203,7 @@ function createSecurityCameraRoom() {
   building.castShadow = true;
   building.receiveShadow = true;
   buildings.add(building);
-  buildingObstacles.push({ x: SECURITY_ROOM_X, z: 17, halfX: 7.1, halfZ: 6.1 });
+  buildingObstacles.push({ x: SECURITY_ROOM_X, z: 17, halfX: 7.1, halfZ: 6.1, height: 7 });
 
   const door = new THREE.Mesh(
     new THREE.BoxGeometry(2.4, 3.4, 0.2),
@@ -7322,7 +7520,11 @@ function updateHud(dt = 1 / 60) {
   leftSignalBtn.classList.toggle("active", !state.hazard && state.signal === "left");
   rightSignalBtn.classList.toggle("active", !state.hazard && state.signal === "right");
   hazardsBtn.classList.toggle("active", state.hazard || state.player.userData.hazard);
-  if (state.helicopterFatal) {
+  if (state.helicopterCrashed && state.inHelicopter) {
+    statusEl.textContent = state.helicopter?.userData.crashSettled
+      ? "HELICOPTER DESTROYED — Restart city"
+      : "HELICOPTER DESTROYED — falling!";
+  } else if (state.helicopterFatal) {
     statusEl.textContent = "Tomato juice! Restart city";
   } else if (state.helicopterFalling) {
     statusEl.textContent = "Falling — you exited before landing!";
@@ -7556,6 +7758,17 @@ function onKeyDown(event) {
   if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "s", "space", "q", "e", "f", "z", "c", "d", "h", "l", "p", "o", "1"].includes(key)) {
     event.preventDefault();
     event.stopPropagation();
+  }
+  if (state.helicopterCrashed) {
+    if (state.inHelicopter && key === "c" && !event.repeat && !state.toggleHeld.has(key)) {
+      if (state.helicopter?.userData.crashSettled) {
+        toggleCarExit();
+      } else {
+        statusEl.textContent = "Helicopter is falling — wait until it hits the ground";
+      }
+      state.toggleHeld.add(key);
+    }
+    return;
   }
   if (state.helicopterFatal || state.helicopterFalling) return;
   if (state.inHelicopter) {
@@ -8236,6 +8449,7 @@ function restartCity() {
   state.inHelicopter = false;
   state.helicopterFalling = null;
   state.helicopterFatal = false;
+  state.helicopterCrashed = false;
   state.securityRoom = false;
   state.securitySelected = null;
   state.securityFeedCursor = 0;
