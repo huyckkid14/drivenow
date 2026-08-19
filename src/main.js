@@ -1028,9 +1028,12 @@ function updateHelicopter(dt) {
     proposedPosition.y += data.verticalVelocity * dt;
     if (proposedPosition.y <= 0) {
       proposedPosition.y = 0;
-      if (downwardImpactSpeed > 5.5 || horizontalImpactSpeed > 9) {
+      // The skids absorb a normal powered descent. Only a genuinely hard
+      // combined impact, or a very fast ground strike, destroys the aircraft.
+      const landingImpactSpeed = Math.hypot(downwardImpactSpeed, horizontalImpactSpeed * 0.45);
+      if (landingImpactSpeed > 13 || horizontalImpactSpeed > 17.5) {
         helicopter.position.copy(proposedPosition);
-        crashHelicopter({ type: "ground" }, previousPosition, Math.hypot(horizontalImpactSpeed, downwardImpactSpeed * 1.25));
+        crashHelicopter({ type: "ground" }, previousPosition, landingImpactSpeed);
         return;
       }
       if (data.verticalVelocity < 0) data.verticalVelocity = 0;
