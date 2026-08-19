@@ -641,6 +641,15 @@ function createHelicopter() {
     emissiveIntensity: 0,
     roughness: 0.16,
   });
+  const reflectorMaterials = [];
+  const reflectorMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffd84a,
+    emissive: 0xff8a00,
+    emissiveIntensity: 0.2,
+    roughness: 0.18,
+    metalness: 0.18,
+  });
+  reflectorMaterials.push(reflectorMaterial);
 
   const body = new THREE.Mesh(new THREE.SphereGeometry(1.55, 24, 16), bodyMaterial);
   body.scale.set(1.08, 0.82, 1.5);
@@ -655,6 +664,41 @@ function createHelicopter() {
   tailBoom.position.set(0, 1.7, -3.5);
   const tailFin = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.85, 1.15), accentMaterial);
   tailFin.position.set(0, 2.35, -6.15);
+
+  const reflectors = [];
+  for (const x of [-1.7, 1.7]) {
+    const sideReflector = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.14, 2.15), reflectorMaterial);
+    sideReflector.position.set(x, 1.45, -0.15);
+    helicopter.add(sideReflector);
+    reflectors.push(sideReflector);
+  }
+  const tailReflector = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.16, 1.35), reflectorMaterial);
+  tailReflector.position.set(0, 2.28, -6.72);
+  helicopter.add(tailReflector);
+  reflectors.push(tailReflector);
+
+  const visibilityLamps = [];
+  const makeVisibilityLamp = (color, position, radius = 0.13, range = 17) => {
+    const material = new THREE.MeshStandardMaterial({
+      color,
+      emissive: color,
+      emissiveIntensity: 0.18,
+      roughness: 0.12,
+    });
+    const lens = new THREE.Mesh(new THREE.SphereGeometry(radius, 12, 8), material);
+    lens.position.copy(position);
+    const light = new THREE.PointLight(color, 0, range, 1.7);
+    light.position.copy(position);
+    helicopter.add(lens, light);
+    const lamp = { lens, material, light };
+    visibilityLamps.push(lamp);
+    return lamp;
+  };
+  const leftNavigationLamp = makeVisibilityLamp(0xff2028, new THREE.Vector3(-1.72, 1.72, 0.12), 0.14, 19);
+  const rightNavigationLamp = makeVisibilityLamp(0x25ff72, new THREE.Vector3(1.72, 1.72, 0.12), 0.14, 19);
+  const tailNavigationLamp = makeVisibilityLamp(0xf4fbff, new THREE.Vector3(0, 2.42, -6.76), 0.12, 20);
+  const topBeacon = makeVisibilityLamp(0xff1825, new THREE.Vector3(0, 3.22, 0.12), 0.16, 27);
+  const bellyStrobe = makeVisibilityLamp(0xf5fbff, new THREE.Vector3(0, 0.68, 0.22), 0.15, 29);
 
   const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 0.8, 12), darkMaterial);
   mast.position.y = 3.25;
@@ -737,6 +781,12 @@ function createHelicopter() {
     searchlight,
     searchlightLens,
     airBrakes,
+    reflectors,
+    reflectorMaterials,
+    visibilityLamps,
+    navigationLamps: [leftNavigationLamp, rightNavigationLamp, tailNavigationLamp],
+    topBeacon,
+    bellyStrobe,
   };
   city.add(helicopter);
   state.helicopter = helicopter;
@@ -956,6 +1006,7 @@ function updateHelicopter(dt) {
   data.rotorSpeed = moveToward(data.rotorSpeed, rotorTarget, dt * 14);
   data.mainRotor.rotation.y += data.rotorSpeed * dt;
   data.tailRotor.rotation.z += data.rotorSpeed * 1.8 * dt;
+  updateHelicopterVisibilityLights(data);
   updateHelicopterSound();
 
   if (state.helicopterCrashed) {
@@ -1080,6 +1131,28 @@ function updateHelicopter(dt) {
   restartBtn.hidden = false;
   statusEl.textContent = "Tomato juice! Restart city";
   playCrashSound(1);
+}
+
+function updateHelicopterVisibilityLights(data) {
+  if (!data.visibilityLamps) return;
+  const nightStrength = THREE.MathUtils.clamp((0.58 - state.daylight) / 0.42, 0, 1);
+  const operating = data.rotorSpeed > 2 && !state.helicopterCrashed;
+  const steadyIntensity = operating ? 0.7 + nightStrength * 7.2 : 0;
+  for (const lamp of data.navigationLamps) {
+    lamp.material.emissiveIntensity = operating ? 1.2 + nightStrength * 6.5 : 0.18;
+    lamp.light.intensity = steadyIntensity;
+  }
+
+  const phase = state.time % 1.25;
+  const redFlash = operating && (phase < 0.09 || (phase > 0.19 && phase < 0.28));
+  const whiteFlash = operating && phase > 0.66 && phase < 0.79;
+  data.topBeacon.material.emissiveIntensity = redFlash ? 12 : operating ? 0.45 : 0.12;
+  data.topBeacon.light.intensity = redFlash ? 16 + nightStrength * 26 : 0;
+  data.bellyStrobe.material.emissiveIntensity = whiteFlash ? 15 : operating ? 0.35 : 0.1;
+  data.bellyStrobe.light.intensity = whiteFlash ? 20 + nightStrength * 34 : 0;
+  for (const material of data.reflectorMaterials) {
+    material.emissiveIntensity = 0.18 + nightStrength * 3.6;
+  }
 }
 
 function isRacingArea(position) {
