@@ -115,6 +115,7 @@ const RACE_OUTER_X = 65;
 const RACE_OUTER_Z = 45;
 const RACE_INNER_X = 45;
 const RACE_INNER_Z = 25;
+const HELICOPTER_MAX_FORWARD_SPEED = 100 / 1.94384;
 const CAR_RADIUS = 2.35;
 const CAR_HALF_WIDTH = 1.23;
 const CAR_HALF_LENGTH = 2.12;
@@ -1060,10 +1061,16 @@ function updateHelicopter(dt) {
     const steerInput = (keys.has("arrowleft") ? 1 : 0) - (keys.has("arrowright") ? 1 : 0);
     const verticalInput = (keys.has("w") ? 1 : 0) - (keys.has("s") ? 1 : 0);
     const airBrake = keys.has("space");
-    const targetFlightSpeed = airBrake ? 0 : forwardInput > 0 ? 22 : forwardInput < 0 ? -12 : 0;
-    const flightAcceleration = airBrake ? 9.5 : forwardInput > 0 ? 5.4 : forwardInput < 0 ? 4.2 : 1.05;
+    const targetFlightSpeed = airBrake
+      ? 0
+      : forwardInput > 0
+        ? HELICOPTER_MAX_FORWARD_SPEED
+        : forwardInput < 0
+          ? -12
+          : 0;
+    const flightAcceleration = airBrake ? 12 : forwardInput > 0 ? 8.5 : forwardInput < 0 ? 4.2 : 1.05;
     data.flightSpeed = moveToward(data.flightSpeed || 0, targetFlightSpeed, dt * flightAcceleration);
-    const speedRatio = THREE.MathUtils.clamp(Math.abs(data.flightSpeed) / 22, 0, 1);
+    const speedRatio = THREE.MathUtils.clamp(Math.abs(data.flightSpeed) / HELICOPTER_MAX_FORWARD_SPEED, 0, 1);
     data.steer = moveToward(data.steer || 0, steerInput, dt * (steerInput ? 1.55 : 2.15));
     if (Math.abs(data.flightSpeed) > 0.3) {
       const yawRate = THREE.MathUtils.lerp(0.58, 1.08, speedRatio);
@@ -8174,7 +8181,8 @@ function updateHelicopterSound() {
   if (!voice) return;
   const now = audio.currentTime;
   const load = THREE.MathUtils.clamp(
-    Math.abs(helicopter.userData.flightSpeed || 0) / 22 + Math.abs(helicopter.userData.verticalVelocity || 0) / 22,
+    Math.abs(helicopter.userData.flightSpeed || 0) / HELICOPTER_MAX_FORWARD_SPEED
+      + Math.abs(helicopter.userData.verticalVelocity || 0) / 22,
     0,
     1,
   );
