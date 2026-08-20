@@ -11,6 +11,7 @@
       <div class="brand">DriveNow</div>
       <div class="readout">
         <span id="speed">0 mph</span>
+        <span id="cruiseSpeed" class="cruise-readout">ACC OFF</span>
         <span id="signal">Signals off</span>
         <span id="status">City clear</span>
       </div>
@@ -57,6 +58,8 @@
             <h4>Driving</h4>
             <div><kbd>↑</kbd><span>Accelerate in selected gear</span></div>
             <div><kbd>↓</kbd><span>Brake</span></div>
+            <div><kbd>A</kbd><span>Toggle adaptive cruise control</span></div>
+            <div><kbd>W / S</kbd><span>Raise / lower cruise maximum speed</span></div>
             <div><kbd>← →</kbd><span>Steer</span></div>
             <div><kbd>Space</kbd><span>Handbrake drift</span></div>
             <div><kbd>D</kbd><span>Cycle camera views</span></div>
@@ -113,6 +116,6 @@
         }
       }
     </script>
-    <script type="module" src="./src/main.js?v=300"></script>
+    <script type="module" src="./src/main.js?v=301"></script>
   </body>
 </html>

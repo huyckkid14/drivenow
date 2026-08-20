@@ -30,6 +30,7 @@ const securityMonitorCamera = new THREE.OrthographicCamera(-2.5, 2.5, 2.5, -2.5,
 securityMonitorCamera.position.z = 5;
 
 const speedEl = document.querySelector("#speed");
+const cruiseSpeedEl = document.querySelector("#cruiseSpeed");
 const signalEl = document.querySelector("#signal");
 const statusEl = document.querySelector("#status");
 const restartBtn = document.querySelector("#restart");
@@ -204,6 +205,8 @@ const state = {
   gearDragStartY: 0,
   gearDragStartZ: 0.16,
   gearDragZ: 0.16,
+  adaptiveCruise: false,
+  adaptiveCruiseMaxMph: 35,
   cockpitLook: { yaw: 0, pitch: 0, lastMovedAt: -Infinity },
   botSensitivity: 0,
   trafficDensity: 1,
@@ -2841,9 +2844,26 @@ function updatePlayer(dt) {
     data.braking = true;
     return;
   }
-  const throttle = keys.has("arrowup") ? 1 : 0;
-  const brakeKey = keys.has("arrowdown") ? 1 : 0;
+  const manualThrottle = keys.has("arrowup") ? 1 : 0;
+  const manualBrake = keys.has("arrowdown") ? 1 : 0;
   const gearDirection = state.gear === "reverse" ? -1 : 1;
+  const cruiseAvailable = state.adaptiveCruise
+    && state.gear === "drive"
+    && !state.playerCrashed
+    && !data.immobilized
+    && !data.crashed
+    && !state.onFoot
+    && !state.carTransition;
+  const cruiseTarget = cruiseAvailable ? getAdaptiveCruiseTargetSpeed(car) : null;
+  const cruiseError = cruiseTarget === null ? 0 : cruiseTarget - Math.max(0, data.speed);
+  const cruiseThrottle = cruiseAvailable && !manualBrake && cruiseError > 0.2
+    ? THREE.MathUtils.clamp(cruiseError / 4.5, 0, 1)
+    : 0;
+  const cruiseBrake = cruiseAvailable && !manualThrottle && cruiseError < -0.25
+    ? THREE.MathUtils.clamp(-cruiseError / 5.5, 0, 1)
+    : 0;
+  const throttle = Math.max(manualThrottle, cruiseThrottle);
+  const brakeKey = Math.max(manualBrake, cruiseBrake);
   if (data.player && data.immobilized && !data.destroyed && state.playerCrashed && (throttle || brakeKey) && !state.onFoot) {
     data.immobilized = false;
     data.limpMode = true;
@@ -2945,6 +2965,32 @@ function updatePlayer(dt) {
   resolveBuildingCollisions(car, previous);
   car.position.x = THREE.MathUtils.clamp(car.position.x, -PLAYER_BOUNDS, PLAYER_BOUNDS);
   car.position.z = THREE.MathUtils.clamp(car.position.z, -PLAYER_BOUNDS, PLAYER_BOUNDS);
+}
+
+function getAdaptiveCruiseTargetSpeed(player) {
+  const data = player.userData;
+  const setSpeed = state.adaptiveCruiseMaxMph / 2.237;
+  const forward = getForward(player).normalize();
+  const right = new THREE.Vector3(forward.z, 0, -forward.x);
+  let nearestLead = null;
+  let nearestDistance = Infinity;
+  for (const other of collidableCars) {
+    if (other === player || !other.visible || other.userData.destroyed) continue;
+    const offset = other.position.clone().sub(player.position).setY(0);
+    const forwardDistance = offset.dot(forward);
+    if (forwardDistance <= 0 || forwardDistance > 55 || Math.abs(offset.dot(right)) > 2.45) continue;
+    if (forwardDistance < nearestDistance) {
+      nearestDistance = forwardDistance;
+      nearestLead = other;
+    }
+  }
+  if (!nearestLead) return setSpeed;
+  const leadVelocity = nearestLead.userData.velocity || new THREE.Vector3();
+  const leadSpeed = Math.max(0, leadVelocity.dot(forward));
+  const safeGap = 5.2 + Math.max(0, data.speed) * 0.82;
+  const gapError = nearestDistance - safeGap;
+  if (gapError <= 0) return Math.max(0, leadSpeed + gapError * 0.9);
+  return Math.min(setSpeed, leadSpeed + gapError * 0.42);
 }
 
 function updatePedestrian(dt) {
@@ -7596,6 +7642,8 @@ function updateHud(dt = 1 / 60) {
     updateReverseWarningDisplay(cockpit);
   }
   speedEl.textContent = state.inHelicopter ? `${helicopterAirspeed} kt airspeed` : `${speed} mph`;
+  cruiseSpeedEl.textContent = state.adaptiveCruise ? `ACC ${state.adaptiveCruiseMaxMph} mph` : "ACC OFF";
+  cruiseSpeedEl.classList.toggle("active", state.adaptiveCruise);
   if (state.hazard || state.player.userData.hazard) signalEl.textContent = "Hazards";
   else if (state.signal === "left") signalEl.textContent = "Left indicator";
   else if (state.signal === "right") signalEl.textContent = "Right indicator";
@@ -7838,7 +7886,7 @@ function onKeyDown(event) {
   }
   ensureAudio();
   keys.add(key);
-  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "s", "space", "q", "e", "f", "z", "c", "d", "h", "l", "p", "o", "1"].includes(key)) {
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "a", "w", "s", "space", "q", "e", "f", "z", "c", "d", "h", "l", "p", "o", "1"].includes(key)) {
     event.preventDefault();
     event.stopPropagation();
   }
@@ -7880,6 +7928,17 @@ function onKeyDown(event) {
     return;
   }
   if (state.toggleHeld.has(key)) return;
+  if (!state.onFoot && !state.securityRoom && !state.policeInterview && key === "a") {
+    state.adaptiveCruise = !state.adaptiveCruise;
+    statusEl.textContent = state.adaptiveCruise
+      ? `Adaptive cruise set to ${state.adaptiveCruiseMaxMph} mph`
+      : "Adaptive cruise off";
+  }
+  if (!state.onFoot && !state.securityRoom && !state.policeInterview && (key === "w" || key === "s")) {
+    const adjustment = key === "w" ? 5 : -5;
+    state.adaptiveCruiseMaxMph = THREE.MathUtils.clamp(state.adaptiveCruiseMaxMph + adjustment, 5, 65);
+    statusEl.textContent = `Adaptive cruise maximum ${state.adaptiveCruiseMaxMph} mph`;
+  }
   if (key === "q") {
     if (state.onFoot && !state.securityRoom) {
       state.grenadeCharging = true;
@@ -7933,7 +7992,7 @@ function onKeyDown(event) {
       statusEl.textContent = "Police siren on — traffic yielding";
     }
   }
-  if (["q", "e", "f", "z", "c", "d", "h", "l", "p", "o", "1"].includes(key)) state.toggleHeld.add(key);
+  if (["a", "w", "s", "q", "e", "f", "z", "c", "d", "h", "l", "p", "o", "1"].includes(key)) state.toggleHeld.add(key);
 }
 
 function onKeyPress(event) {
@@ -8095,6 +8154,7 @@ function normalizeKey(event) {
     KeyE: "e",
     KeyW: "w",
     KeyS: "s",
+    KeyA: "a",
     KeyZ: "z",
     KeyC: "c",
     KeyD: "d",

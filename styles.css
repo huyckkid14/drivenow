@@ -205,8 +205,21 @@ body.security-view #hud > .brand,
 body.security-view #hud > .controls,
 body.security-view #hud > .hud-settings,
 body.security-view #speed,
+body.security-view #cruiseSpeed,
 body.security-view #signal {
   display: none;
+}
+
+.cruise-readout {
+  min-width: 88px;
+  color: #aeb8b8;
+  border-color: rgba(255, 255, 255, 0.14) !important;
+}
+
+.cruise-readout.active {
+  color: #8ff0b4;
+  border-color: rgba(143, 240, 180, 0.42) !important;
+  background: rgba(38, 125, 79, 0.24) !important;
 }
 
 body.security-view #status {
